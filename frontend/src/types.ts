@@ -298,6 +298,8 @@ export interface Candidate {
   missingSkills: string[];
   skillEvidence: Record<string, SkillEvidence>;
   explanation: string;
+  summary?: string;
+  skills?: string[];
   experience: string;
   experienceYears: number;
 

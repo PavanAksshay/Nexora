@@ -1785,6 +1785,7 @@ function App() {
         <Routes>
           {/* Candidate Assessment Portal (Accessible directly via invite link) */}
           <Route path="/assessment/:id" element={<CandidateAssessmentPortal />} />
+          <Route path="/assessment/:id/take" element={<CandidateAssessmentPortal />} />
 
           {user ? (
             <Route

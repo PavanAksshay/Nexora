@@ -192,74 +192,89 @@ export function analyzeResumeTextClient(
   const phone = phoneMatch ? phoneMatch[1].trim() : '+91 90000 44444';
 
   // 5. Location
-  let location = 'Bengaluru, India';
+  let location = '';
   const locMatch = cleanText.match(/(?:Location|Address|City)\s*[:\-–]\s*([^\n,;|]{2,40}(?:,\s*[A-Z]{2}|,\s*[A-Za-z\s]+)?)/i);
   if (locMatch && locMatch[1]) {
     location = locMatch[1].trim();
   } else {
-    for (let i = 0; i < Math.min(lines.length, 4); i++) {
+    for (let i = 0; i < Math.min(lines.length, 6); i++) {
       const l = lines[i];
       if (l.includes('|')) {
         const parts = l.split('|').map(p => p.trim());
         for (const p of parts) {
-          if (/(?:india|bengaluru|bangalore|usa|san francisco|london|ny|ca|remote)/i.test(p)) {
+          if (/(?:india|bengaluru|bangalore|mumbai|delhi|usa|san francisco|london|ny|ca|remote)/i.test(p)) {
             location = p;
             break;
           }
         }
+      } else if (/(?:bengaluru|bangalore|mumbai|delhi|hyderabad|pune|san francisco|new york|remote)/i.test(l)) {
+        location = l.trim();
+        break;
       }
+      if (location) break;
     }
   }
 
-  // 6. Section Parsing: Education, Experience, Projects
+  // 6. Summary Extraction
+  let summary = '';
+  const sumMatch = cleanText.match(/(?:SUMMARY|ABOUT|PROFILE|PROFESSIONAL SUMMARY)[\s\S]*?(?=(?:EDUCATION|EXPERIENCE|WORK HISTORY|PROJECTS|SKILLS|CERTIFICATIONS|\Z))/i);
+  if (sumMatch) {
+    summary = sumMatch[0].replace(/^(?:SUMMARY|ABOUT|PROFILE|PROFESSIONAL SUMMARY)\s*[:\-–]?\s*/i, '').trim();
+    // Clean header line if captured
+    summary = summary.replace(/^(?:SUMMARY|ABOUT|PROFILE|PROFESSIONAL SUMMARY)\s*/i, '').trim();
+  }
+
+  // 7. Section Parsing: Education, Experience, Projects
   const education = parseEducationSection(cleanText);
   const workHistory = parseWorkHistorySection(cleanText);
   const projects = parseProjectsSection(cleanText);
 
-  // 7. Title
-  let title = 'Frontend Intern';
+  // 8. Title
+  let title = 'Software Engineer';
   if (workHistory.length > 0 && workHistory[0].role) {
     title = workHistory[0].role;
   } else if (/intern/i.test(cleanText)) {
-    title = 'Frontend Intern';
+    title = 'Software Development Intern';
+  } else if (/full stack/i.test(cleanText)) {
+    title = 'Full Stack Developer';
   } else if (/frontend/i.test(cleanText)) {
     title = 'Frontend Developer';
-  } else {
-    title = 'Software Engineer';
   }
 
-  // 8. Evidenced Skills strictly from visible text
+  // 9. Evidenced Skills strictly from visible text
   const detectedSkills = new Set<string>();
-  const skillsSecMatch = cleanText.match(/(?:SKILLS|TECHNICAL SKILLS|CORE COMPETENCIES)[\s\S]*?(?=(?:EXPERIENCE|EDUCATION|PROJECTS|SUMMARY|\Z))/i);
+  const skillsSecMatch = cleanText.match(/(?:SKILLS|TECHNICAL SKILLS|CORE COMPETENCIES)[\s\S]*?(?=(?:EXPERIENCE|EDUCATION|PROJECTS|SUMMARY|CERTIFICATIONS|\Z))/i);
   const skillsSecText = skillsSecMatch ? skillsSecMatch[0] : '';
 
   if (skillsSecText) {
-    const rawSkillTokens = skillsSecText.split(/[,|\n•\t]/);
+    const cleanSec = skillsSecText.replace(/^(?:SKILLS|TECHNICAL SKILLS|CORE COMPETENCIES)\s*[:\-–]?\s*/i, '');
+    const rawSkillTokens = cleanSec.split(/[,|\n•\t;]/);
     for (const tok of rawSkillTokens) {
-      const tClean = tok.replace(/SKILLS|Basic/gi, '').trim();
-      if (tClean.length >= 2 && tClean.length <= 25) {
+      const tClean = tok.replace(/^[•*\-\d.]+\s*/, '').trim();
+      if (tClean.length >= 2 && tClean.length <= 35 && !/skills|technical|advanced|frameworks|tools|languages/i.test(tClean)) {
         detectedSkills.add(tClean);
       }
     }
   }
 
   for (const skill of COMMON_SKILLS) {
-    const reg = new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    const reg = new RegExp(`(?<![a-zA-Z0-9_])${skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-zA-Z0-9_])`, 'i');
     if (reg.test(cleanText)) {
       detectedSkills.add(skill);
     }
   }
 
   const skillsArray = Array.from(detectedSkills);
-  if (skillsArray.length === 0) {
-    skillsArray.push('JavaScript', 'HTML', 'CSS', 'SQL', 'Git', 'Figma');
-  }
 
-  // 9. Experience Years
-  let experienceYears = 0.5;
-  if (/intern/i.test(title) || /2026/i.test(cleanText) || /graduate/i.test(cleanText)) {
-    experienceYears = 0.5;
-  } else {
+  // 10. Experience Years
+  let experienceYears = 0.0;
+  if (workHistory.length > 0 && workHistory[0].period) {
+    const period = workHistory[0].period.toLowerCase();
+    if (period.includes('jun') && period.includes('aug') && period.includes('2026')) {
+      experienceYears = 0.3;
+    }
+  }
+  if (experienceYears === 0.0) {
     const expMatch = cleanText.match(/(\d+(?:\.\d+)?)\+?\s*(?:years|yrs)/i);
     if (expMatch && expMatch[1]) {
       const parsed = parseFloat(expMatch[1]);
@@ -268,8 +283,11 @@ export function analyzeResumeTextClient(
       }
     }
   }
+  if (experienceYears === 0.0 && (/intern/i.test(title) || /student/i.test(cleanText))) {
+    experienceYears = 0.25;
+  }
 
-  // 10. Match Scoring against Job Requirements
+  // 11. Match Scoring against Job Requirements
   const requiredSkills = job?.skillsRequired && job.skillsRequired.length > 0
     ? job.skillsRequired
     : ['React', 'TypeScript', 'Python', 'SQL', 'Docker'];
@@ -294,7 +312,7 @@ export function analyzeResumeTextClient(
   const verificationStatus: 'verified' | 'review_recommended' | 'unverified' = 
     verificationAlerts.length > 0 ? 'review_recommended' : 'verified';
 
-  // 11. Multi-Source Skill Evidence Map
+  // 12. Multi-Source Skill Evidence Map
   const skillEvidence: Record<string, SkillEvidence> = {};
   const allSkillsToMap = Array.from(new Set([...requiredSkills, ...skillsArray]));
 
@@ -318,7 +336,7 @@ export function analyzeResumeTextClient(
     } else if (inProjects || inWork) {
       level = 'moderate';
       if (inProjects) details.push(`Applied in project (${projects[0]?.title || 'Portfolio'})`);
-      if (inWork) details.push(`Used in work experience at ${workHistory[0]?.company || 'Studio'}`);
+      if (inWork) details.push(`Used in work experience at ${workHistory[0]?.company || 'Company'}`);
     } else if (inVisibleSkills) {
       level = 'limited';
       details.push('Listed in verified skills section');
@@ -344,7 +362,9 @@ export function analyzeResumeTextClient(
     phone,
     location,
     title,
+    summary,
     experienceYears,
+    skills: skillsArray,
     finalScore,
     semanticScore,
     keywordScore,
@@ -361,93 +381,106 @@ export function analyzeResumeTextClient(
     workHistory,
     education,
     projects,
-    explanation: `Verified candidate profile with ${matchedSkills.length} of ${requiredSkills.length} core skills evidenced in visible text. ${verificationAlerts.length > 0 ? 'Adversarial hidden text and prompt injections were identified and excluded from evaluation.' : 'Document passed all integrity checks.'}`
+    explanation: `Verified candidate profile with ${matchedSkills.length} of ${requiredSkills.length} core skills evidenced in visible text.`
   };
 }
 
 function parseEducationSection(text: string) {
-  const eduMatch = text.match(/(?:EDUCATION|ACADEMIC BACKGROUND)[\s\S]*?(?=(?:EXPERIENCE|WORK HISTORY|PROJECTS|SKILLS|SUMMARY|\Z))/i);
-  if (!eduMatch) {
-    return [
-      {
-        degree: 'B.Tech, Computer Science Engineering',
-        institution: 'Example Institute of Technology',
-        year: '2022–2026',
-        details: 'CGPA: 8.1/10'
-      }
-    ];
-  }
+  const eduMatch = text.match(/(?:EDUCATION|ACADEMIC BACKGROUND)[\s\S]*?(?=(?:EXPERIENCE|WORK HISTORY|PROJECTS|SKILLS|SUMMARY|CERTIFICATIONS|\Z))/i);
+  if (!eduMatch) return [];
 
-  const lines = eduMatch[0].split('\n').map(l => l.trim()).filter(l => l && !/EDUCATION/i.test(l));
+  const rawText = eduMatch[0].replace(/^(?:EDUCATION|ACADEMIC BACKGROUND)\s*[:\-–]?\s*/i, '');
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l && !/EDUCATION/i.test(l));
   const result = [];
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
-    const parts = line.split(/\s+[—–\-]+\s+/);
-    const degree = parts[0]?.trim() || line;
-    const institution = parts[1]?.trim() || 'Example Institute of Technology';
-    
-    let year = '2022–2026';
+    const line = lines[i].replace(/^[•*\-\d.]+\s*/, '').trim();
+    let degree = line;
+    let institution = '';
+    let year = '';
     let details = '';
+
+    const cgpaM = line.match(/(?:CGPA|GPA)\s*[:\-–]?\s*\d+(?:\.\d+)?(?:\/\d+)?/i);
+    if (cgpaM) details = cgpaM[0];
+
+    const yearM = line.match(/(\b\d{4}\s*[-–]\s*\d{4}\b|\b\d{4}\b)/);
+    if (yearM) year = yearM[1];
+
+    if (/\s+[—–\-]+\s+/.test(line)) {
+      const parts = line.split(/\s+[—–\-]+\s+/);
+      degree = parts[0].trim();
+      institution = parts[1] ? parts[1].trim() : '';
+    } else if (line.includes(', ')) {
+      const parts = line.split(', ');
+      degree = parts[0].trim();
+      institution = parts.slice(1).join(', ').trim();
+    }
+    
     i++;
     if (i < lines.length && (/\b20\d\d\b/.test(lines[i]) || /CGPA|GPA/i.test(lines[i]))) {
-      details = lines[i];
-      const yMatch = lines[i].match(/(\b\d{4}\s*[-–]\s*\d{4}\b|\b\d{4}\b)/);
-      if (yMatch) year = yMatch[1];
+      const nextLine = lines[i];
+      if (!details && /CGPA|GPA/i.test(nextLine)) details = nextLine;
+      if (!year) {
+        const yM = nextLine.match(/(\b\d{4}\s*[-–]\s*\d{4}\b|\b\d{4}\b)/);
+        if (yM) year = yM[1];
+      }
       i++;
     }
 
     result.push({ degree, institution, year, details });
   }
 
-  return result.length > 0 ? result : [
-    {
-      degree: 'B.Tech, Computer Science Engineering',
-      institution: 'Example Institute of Technology',
-      year: '2022–2026',
-      details: 'CGPA: 8.1/10'
-    }
-  ];
+  return result;
 }
 
 function parseWorkHistorySection(text: string) {
-  const expMatch = text.match(/(?:EXPERIENCE|WORK HISTORY|EMPLOYMENT)[\s\S]*?(?=(?:PROJECTS|SKILLS|EDUCATION|SUMMARY|\Z))/i);
-  if (!expMatch) {
-    return [
-      {
-        role: 'Frontend Intern',
-        company: 'PixelCraft Studio',
-        period: 'Jun 2025 – Aug 2025',
-        highlights: [
-          'Built responsive interfaces using HTML, CSS and JavaScript.',
-          'Worked with designers to improve usability and accessibility.'
-        ]
-      }
-    ];
-  }
+  const expMatch = text.match(/(?:EXPERIENCE|WORK HISTORY|EMPLOYMENT)[\s\S]*?(?=(?:PROJECTS|SKILLS|EDUCATION|SUMMARY|CERTIFICATIONS|\Z))/i);
+  if (!expMatch) return [];
 
-  const lines = expMatch[0].split('\n').map(l => l.trim()).filter(l => l && !/EXPERIENCE|WORK HISTORY/i.test(l));
+  const rawText = expMatch[0].replace(/^(?:EXPERIENCE|WORK HISTORY|EMPLOYMENT)\s*[:\-–]?\s*/i, '');
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l && !/EXPERIENCE|WORK HISTORY/i.test(l));
   const result = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    const parts = line.split(/\s+[—–\-]+\s+/);
-    const role = parts[0]?.trim() || line;
-    const company = parts[1]?.trim() || 'PixelCraft Studio';
+    let lineClean = line.replace(/^[•*\-\d.]+\s*/, '').trim();
+    let role = lineClean;
+    let company = '';
+    let period = '';
 
-    let period = 'Jun 2025 – Aug 2025';
+    const dateM = lineClean.match(/\(?((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*[-–\d]*\s*[-–]?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|present|current)*\s*\d{0,4})\)?/i);
+    if (dateM && dateM[1].trim().length > 3) {
+      period = dateM[1].trim();
+      lineClean = lineClean.replace(dateM[0], '').trim();
+    }
+
+    if (/\s+[—–\-]+\s+/.test(lineClean)) {
+      const parts = lineClean.split(/\s+[—–\-]+\s+/);
+      role = parts[0].trim();
+      company = parts[1] ? parts[1].trim() : '';
+    } else if (lineClean.includes(' at ')) {
+      const parts = lineClean.split(' at ');
+      role = parts[0].trim();
+      company = parts[1].trim();
+    } else if (lineClean.includes(', ')) {
+      const parts = lineClean.split(', ');
+      role = parts[0].trim();
+      company = parts.slice(1).join(', ').trim();
+    }
+
     const highlights: string[] = [];
     i++;
-    if (i < lines.length && /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|present)/i.test(lines[i])) {
+    if (i < lines.length && !period && /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|present)/i.test(lines[i])) {
       period = lines[i];
       i++;
     }
 
     while (i < lines.length) {
       const cur = lines[i];
-      if (/PROJECTS|SKILLS|EDUCATION/i.test(cur)) break;
-      if (/\s+[—–\-]+\s+/.test(cur) && /intern|engineer|developer|lead/i.test(cur)) break;
-      highlights.push(cur);
+      const curClean = cur.replace(/^[•*\-\d.]+\s*/, '').trim();
+      if (/PROJECTS|SKILLS|EDUCATION|CERTIFICATIONS/i.test(curClean)) break;
+      if (/\s+[—–\-]+\s+|, /.test(curClean) && /intern|engineer|developer|lead|architect|manager/i.test(curClean)) break;
+      highlights.push(curClean);
       i++;
     }
 
@@ -455,76 +488,57 @@ function parseWorkHistorySection(text: string) {
       role,
       company,
       period,
-      highlights: highlights.length > 0 ? highlights : [
-        'Built responsive interfaces using HTML, CSS and JavaScript.',
-        'Worked with designers to improve usability and accessibility.'
-      ]
+      highlights
     });
   }
 
-  return result.length > 0 ? result : [
-    {
-      role: 'Frontend Intern',
-      company: 'PixelCraft Studio',
-      period: 'Jun 2025 – Aug 2025',
-      highlights: [
-        'Built responsive interfaces using HTML, CSS and JavaScript.',
-        'Worked with designers to improve usability and accessibility.'
-      ]
-    }
-  ];
+  return result;
 }
 
 function parseProjectsSection(text: string) {
-  const projMatch = text.match(/(?:PROJECTS|PERSONAL PROJECTS)[\s\S]*?(?=(?:SKILLS|EXPERIENCE|EDUCATION|SUMMARY|\Z))/i);
-  if (!projMatch) {
-    return [
-      {
-        title: 'Campus Events Portal',
-        technologies: ['HTML', 'CSS', 'JavaScript'],
-        description: 'Created a simple event listing and registration interface.'
-      },
-      {
-        title: 'Student Expense Tracker',
-        technologies: ['JavaScript', 'Local Storage'],
-        description: 'Built a browser-based tracker for personal expenses.'
-      }
-    ];
-  }
+  const projMatch = text.match(/(?:PROJECTS|PERSONAL PROJECTS)[\s\S]*?(?=(?:SKILLS|EXPERIENCE|EDUCATION|SUMMARY|CERTIFICATIONS|\Z))/i);
+  if (!projMatch) return [];
 
-  const lines = projMatch[0].split('\n').map(l => l.trim()).filter(l => l && !/PROJECTS/i.test(l));
+  const rawText = projMatch[0].replace(/^(?:PROJECTS|PERSONAL PROJECTS)\s*[:\-–]?\s*/i, '');
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l && !/PROJECTS/i.test(l));
   const result = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    const parts = line.split(/\s+[—–\-]+\s+/);
-    const title = parts[0]?.trim() || line;
-    const techs = parts[1] ? parts[1].split(',').map(t => t.trim()).filter(Boolean) : ['HTML', 'CSS', 'JavaScript'];
+    let lineClean = line.replace(/^[•*\-\d.]+\s*/, '').trim();
+    let title = lineClean;
+    let techs: string[] = [];
 
-    let description = 'Built interactive web interface.';
+    const techM = lineClean.match(/\(([^)]+)\)/);
+    if (techM) {
+      techs = techM[1].split(/[,/|]/).map(t => t.trim()).filter(Boolean);
+      title = lineClean.replace(techM[0], '').trim();
+    }
+
+    if (/\s+[—–\-]+\s+/.test(lineClean)) {
+      const parts = lineClean.split(/\s+[—–\-]+\s+/);
+      title = parts[0].trim();
+      if (parts[1]) techs = parts[1].split(/[,/|]/).map(t => t.trim()).filter(Boolean);
+    }
+
+    const descBullets: string[] = [];
     i++;
-    if (i < lines.length) {
-      description = lines[i];
+    while (i < lines.length) {
+      const cur = lines[i];
+      const curClean = cur.replace(/^[•*\-\d.]+\s*/, '').trim();
+      if (/SKILLS|EXPERIENCE|EDUCATION|CERTIFICATIONS/i.test(curClean)) break;
+      if (!cur.startsWith('-') && !cur.startsWith('•') && (cur.includes('(') || /\s+[—–\-]+\s+/.test(cur))) break;
+      descBullets.push(curClean);
       i++;
     }
 
     result.push({
       title,
       technologies: techs,
-      description
+      description: descBullets.join(' ')
     });
   }
 
-  return result.length > 0 ? result : [
-    {
-      title: 'Campus Events Portal',
-      technologies: ['HTML', 'CSS', 'JavaScript'],
-      description: 'Created a simple event listing and registration interface.'
-    },
-    {
-      title: 'Student Expense Tracker',
-      technologies: ['JavaScript', 'Local Storage'],
-      description: 'Built a browser-based tracker for personal expenses.'
-    }
-  ];
+  return result;
 }
+

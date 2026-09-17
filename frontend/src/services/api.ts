@@ -299,12 +299,17 @@ export async function shortlistCandidate(candidateId: string): Promise<{ candida
 }
 
 export type GeneratedAssessmentResponse = {
+  success?: boolean;
   candidate_id: string;
   assessment_id: number;
   invite_id: number;
   token: string;
   status: string;
   invite_url: string | null;
+  email_status?: 'sent' | 'mocked' | 'failed' | string;
+  email_sent: boolean;
+  question_count?: number;
+  duration_minutes?: number;
   assessment: {
     title: string;
     description: string;
@@ -319,7 +324,6 @@ export type GeneratedAssessmentResponse = {
       estimate_minutes: number;
     }[];
   };
-  email_sent: boolean;
   email?: {
     recipient: string;
     subject: string;

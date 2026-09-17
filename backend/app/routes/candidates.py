@@ -153,21 +153,50 @@ def create_assessment(
 
 
 @router.post("/candidates/{candidate_id}/assessment/send")
+@router.post("/candidates/{candidate_id}/assessment/generate-and-send")
 def send_generated_assessment(
     candidate_id: str,
-    payload: dict,
-    request: Request,
+    payload: dict | None = None,
+    request: Request = None,
     _: RecruiterIdentity = Depends(get_current_recruiter),
 ):
     try:
         job_description = payload if isinstance(payload, dict) else {}
-        if not isinstance(job_description, dict):
-            job_description = {}
-        generated = _pipeline(request).generate_assessment(candidate_id, job_description)
-        candidate, assessment_id_raw, link, invite_url, sent, link_obj, *_ = _pipeline(request).create_generated_assessment(
+        pipeline = _pipeline(request)
+
+        # 1. Ensure candidate exists in DB (auto-register from provider if needed)
+        candidate = pipeline.database.get_candidate(candidate_id)
+        if candidate is None:
+            provider_cand = pipeline.provider.get_candidate(candidate_id)
+            if provider_cand is not None:
+                candidate = pipeline.database.add_candidate(
+                    candidate_id=candidate_id,
+                    name=provider_cand.candidate_name,
+                    email=getattr(provider_cand.resume_data, "get", lambda k, d=None: d)("email") or f"{candidate_id}@applicant.net",
+                    analysis_id="analysis_default",
+                    initial_stage="SHORTLISTED",
+                )
+            else:
+                raise HTTPException(status_code=404, detail=f"Candidate {candidate_id} not found")
+
+        # 2. Auto-promote stage from SCREENING to SHORTLISTED if recruiter triggers assessment
+        if candidate.current_stage == "SCREENING":
+            candidate = pipeline.database.update_stage(candidate_id, "SHORTLISTED")
+
+        # 3. Generate assessment definitions
+        try:
+            generated = pipeline.generate_assessment(candidate_id, job_description)
+        except ValueError as val_err:
+            if "job description" in str(val_err).lower():
+                raise HTTPException(status_code=400, detail="No job description is available for assessment generation.")
+            raise HTTPException(status_code=400, detail=str(val_err))
+
+        # 4. Create and persist assessment + invite
+        candidate, assessment_id_raw, link, invite_url, sent, link_obj, *_ = pipeline.create_generated_assessment(
             candidate_id, generated
         )
         assessment_id = assessment_id_raw if isinstance(assessment_id_raw, int) else getattr(assessment_id_raw, "id", 0)
+
         def _link_attr(link, names):
             current = link
             for name in names:
@@ -177,13 +206,32 @@ def send_generated_assessment(
                     return None
             return current
 
-        payload = {
+        invite_token = _link_attr(link, ["token"]) or _link_attr(link, ["invite", "token"]) or ""
+        frontend_base = getattr(pipeline.codeassess.service, "frontend_url", None) or "http://localhost:5173"
+        frontend_base = frontend_base.rstrip("/")
+        canonical_invite_url = f"{frontend_base}/assessment/{assessment_id}/take?invite_token={invite_token}" if invite_token else invite_url
+
+        # 5. Determine email status
+        email_sent_bool = getattr(sent, "sent", bool(sent)) if sent is not None else False
+        email_mode = getattr(pipeline.email, "mode", "logging")
+        if email_sent_bool:
+            email_status_str = "mocked" if email_mode == "logging" or "Logging" in type(pipeline.email).__name__ else "sent"
+        else:
+            email_status_str = "failed"
+
+        return {
+            "success": True,
             "candidate_id": candidate_id,
             "assessment_id": assessment_id,
             "invite_id": _link_attr(link, ["id"]) or _link_attr(link, ["invite_id"]),
-            "token": _link_attr(link, ["token"]) or _link_attr(link, ["invite", "token"]),
+            "token": invite_token,
             "status": _link_attr(link, ["status"]) or _link_attr(link, ["invite", "status"]),
-            "invite_url": invite_url,
+            "invite_url": canonical_invite_url,
+            "email_status": email_status_str,
+            "email_sent": email_sent_bool,
+            "email": _email_description(sent) if hasattr(sent, "recipient") else None,
+            "question_count": len(generated.questions_used),
+            "duration_minutes": generated.definition.duration_minutes,
             "assessment": {
                 "title": generated.definition.title,
                 "description": generated.definition.description,
@@ -201,14 +249,16 @@ def send_generated_assessment(
                     for q in generated.questions_used
                 ],
             },
-            "email_sent": getattr(sent, "sent", bool(sent)) if sent is not None else False,
-            "email": _email_description(sent) if hasattr(sent, "recipient") else None,
             "stage": candidate.current_stage,
         }
-        return payload
+    except HTTPException:
+        raise
     except PipelineError as exc:
-        code = 404 if "not found" in str(exc) else 409
-        raise HTTPException(status_code=code, detail=str(exc)) from exc
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if "no job description" in str(exc).lower():
+            raise HTTPException(status_code=400, detail="No job description is available for assessment generation.") from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         import traceback
         traceback.print_exc()

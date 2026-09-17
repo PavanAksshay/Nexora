@@ -248,12 +248,13 @@ class AssessmentSendAndRound3Tests(unittest.TestCase):
         self.assertEqual(len(self.app.state.container.codeassess.client.list_invites()), initial_invites)
         self.assertFalse(second_payload["email_sent"])
 
-    def test_candidate_not_shortlisted_rejects_generate(self):
+    def test_candidate_rejected_stage_rejects_generate(self):
         cand_id = "cand_x_03"
         self._seed_candidate(cand_id, "p@example.com", "Priya")
+        self.app.state.container.database.update_stage(cand_id, "REJECTED")
         response = self._post_send(cand_id, {"title": "Backend Engineer", "required_technologies": ["Python"]})
         self.assertEqual(response.status_code, 409)
-        self.assertIn("shortlisted", response.json()["detail"].lower())
+        self.assertIn("stage", response.json()["detail"].lower())
 
     def test_round3_selection_sends_progression_email(self):
         cand_id = "cand_x_04"

@@ -409,29 +409,11 @@ export const store = {
       missingSkills,
       skillEvidence,
       explanation: aiParsed?.explanation || `Verified experience across ${matchedSkills.join(', ') || 'demonstrated skills'}. Scanned with AI engine.`,
-      experience: `${aiParsed?.experienceYears || 0.5} years of demonstrated experience`,
-      experienceYears: aiParsed?.experienceYears || 0.5,
-      education: aiParsed?.education || [
-        { degree: 'B.Tech, Computer Science Engineering', institution: 'Example Institute of Technology', year: '2022–2026', details: 'CGPA: 8.1/10' }
-      ],
-      projects: aiParsed?.projects || [
-        {
-          title: 'Campus Events Portal',
-          technologies: ['HTML', 'CSS', 'JavaScript'],
-          description: 'Created a simple event listing and registration interface.'
-        }
-      ],
-      workHistory: aiParsed?.workHistory || [
-        {
-          role: candidateTitle,
-          company: 'PixelCraft Studio',
-          period: 'Jun 2025 – Aug 2025',
-          highlights: [
-            'Built responsive interfaces using HTML, CSS and JavaScript.',
-            'Worked with designers to improve usability and accessibility.'
-          ]
-        }
-      ],
+      experience: `${aiParsed?.experienceYears || 0} years of demonstrated experience`,
+      experienceYears: aiParsed?.experienceYears || 0,
+      education: aiParsed?.education || [],
+      projects: aiParsed?.projects || [],
+      workHistory: aiParsed?.workHistory || [],
       links: {
         github: `https://github.com/${candidateName.toLowerCase().replace(/\s+/g, '')}`,
         linkedin: `https://linkedin.com/in/${candidateName.toLowerCase().replace(/\s+/g, '')}`,

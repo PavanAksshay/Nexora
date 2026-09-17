@@ -77,7 +77,7 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
     try {
       const result = await generateAndSendAssessment(c.id);
       setGeneratedAssessment(result);
-      const inviteUrl = result.invite_url || (result.token ? `${window.location.origin}/candidate/${result.token}` : null);
+      const inviteUrl = result.invite_url || (result.token ? `${window.location.origin}/assessment/${result.assessment_id}/take?invite_token=${result.token}` : null);
       const updated: Candidate = {
         ...c,
         currentStage: 'ASSESSMENT_SENT',
@@ -93,7 +93,17 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
         },
       };
       setLocalCandidate(updated);
-      toast.success(`Technical Assessment created & invitation email sent to ${result.email?.recipient || c.email}!`);
+      store.updateCandidate(updated);
+
+      if (result.email_status === 'sent') {
+        toast.success(`Technical Assessment created & email sent to ${result.email?.recipient || c.email}!`);
+      } else if (result.email_status === 'mocked') {
+        toast.info(`Assessment generated (Dev Mock Email Mode). Invite link ready!`);
+      } else if (result.email_status === 'failed') {
+        toast.warning(`Assessment created, but email delivery failed. You can copy the link below.`);
+      } else {
+        toast.success(`Technical Assessment generated & invite link created!`);
+      }
     } catch (err: any) {
       console.error('Failed to generate & send assessment:', err);
       const detail = err?.response?.data?.detail || err?.message || 'Failed to generate assessment.';
@@ -1125,8 +1135,28 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
 
               {generatedAssessment && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  <div style={{ padding: '12px 16px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 'var(--radius-xs)', color: '#065F46', fontSize: '13px' }}>
-                    <b>✓ Assessment Generated & Invitation Email Dispatched!</b>
+                  <div
+                    style={{
+                      padding: '12px 16px',
+                      backgroundColor: generatedAssessment.email_status === 'failed' ? '#FEF2F2' : '#ECFDF5',
+                      border: `1px solid ${generatedAssessment.email_status === 'failed' ? '#FCA5A5' : '#A7F3D0'}`,
+                      borderRadius: 'var(--radius-xs)',
+                      color: generatedAssessment.email_status === 'failed' ? '#991B1B' : '#065F46',
+                      fontSize: '13px',
+                    }}
+                  >
+                    {generatedAssessment.email_status === 'sent' && (
+                      <b>✓ Assessment Generated & Email Sent to Candidate!</b>
+                    )}
+                    {generatedAssessment.email_status === 'mocked' && (
+                      <b>✓ Assessment Generated & Invite Link Created (Dev Mock Email Mode)!</b>
+                    )}
+                    {generatedAssessment.email_status === 'failed' && (
+                      <b>⚠️ Assessment Created, but Email Delivery Failed. Use the Link Below.</b>
+                    )}
+                    {!['sent', 'mocked', 'failed'].includes(generatedAssessment.email_status || '') && (
+                      <b>✓ Assessment Generated & Invite Link Created!</b>
+                    )}
                   </div>
 
                   <div>
@@ -1136,7 +1166,7 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
                     </p>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
                     <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Generated Questions:</span>
                     {generatedAssessment.assessment.questions.map((q, idx) => (
                       <div key={idx} style={{ padding: '10px 12px', backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-xs)', fontSize: '12px' }}>
@@ -1149,16 +1179,36 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
                     ))}
                   </div>
 
-                  <div style={{ padding: '12px', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-xs)', fontSize: '12px' }}>
-                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>Candidate Unique Invite URL:</div>
-                    <a
-                      href={generatedAssessment.invite_url || `/candidate/${generatedAssessment.token}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ color: 'var(--primary-color)', wordBreak: 'break-all', fontWeight: 500 }}
-                    >
-                      {generatedAssessment.invite_url || `http://localhost:5173/candidate/${generatedAssessment.token}`}
-                    </a>
+                  <div style={{ padding: '12px', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-xs)', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontWeight: 600 }}>Candidate Unique Invite URL:</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <input
+                        type="text"
+                        readOnly
+                        value={generatedAssessment.invite_url || `${window.location.origin}/assessment/${generatedAssessment.assessment_id}/take?invite_token=${generatedAssessment.token}`}
+                        style={{ flex: 1, padding: '6px 10px', fontSize: '12px', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-xs)', backgroundColor: '#FFFFFF' }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          const targetUrl = generatedAssessment.invite_url || `${window.location.origin}/assessment/${generatedAssessment.assessment_id}/take?invite_token=${generatedAssessment.token}`;
+                          navigator.clipboard.writeText(targetUrl);
+                          toast.success('Assessment URL copied to clipboard!');
+                        }}
+                      >
+                        Copy Link
+                      </button>
+                      <a
+                        href={generatedAssessment.invite_url || `/assessment/${generatedAssessment.assessment_id}/take?invite_token=${generatedAssessment.token}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-primary btn-sm"
+                        style={{ textDecoration: 'none' }}
+                      >
+                        Open Assessment
+                      </a>
+                    </div>
                   </div>
                 </div>
               )}

@@ -136,6 +136,8 @@ class PipelineService:
         can show generated questions before anything is sent to CodeAssess.
         """
         candidate = self.candidate(candidate_id)
+        if candidate.current_stage == "SCREENING":
+            candidate = self.database.update_stage(candidate_id, "SHORTLISTED")
         if candidate.current_stage != "SHORTLISTED" and self.database.get_assessment_link(candidate_id) is None:
             raise PipelineError(
                 f"Candidate must be shortlisted before assessment generation; current stage is {candidate.current_stage}"
@@ -160,13 +162,10 @@ class PipelineService:
     def create_generated_assessment(
         self, candidate_id: str, generated: GeneratedAssessment
     ) -> tuple:
-        """Persist a previously generated assessment into CodeAssess and email it.
-
-        This pathway is used after the recruiter approves the generated questions.
-        It is idempotent: if a valid invite already exists for the candidate, it is
-        returned rather than creating a duplicate CodeAssess assessment.
-        """
+        """Persist a previously generated assessment into CodeAssess and email it."""
         candidate = self.candidate(candidate_id)
+        if candidate.current_stage == "SCREENING":
+            candidate = self.database.update_stage(candidate_id, "SHORTLISTED")
 
         existing_link = self.database.get_assessment_link(candidate_id)
         if existing_link is not None and candidate.current_stage in {
@@ -196,8 +195,6 @@ class PipelineService:
                 f"Candidate must be shortlisted before assessment creation; current stage is {candidate.current_stage}"
             )
 
-        # Do not allow a candidate into the pending state if another pending
-        # assessment is still being processed for them.
         if candidate_id in self._pending_assessments:
             raise PipelineError("An assessment is already being processed for this candidate")
 
@@ -236,12 +233,18 @@ class PipelineService:
                 updated_at=now,
             )
             self.database.save_assessment_link(link)
-            sent = self.email.send_assessment_invitation(
-                recipient=candidate.email,
-                candidate_name=candidate.name,
-                job_title=generated.job_title,
-                assessment_url=self.codeassess.build_invite_url_manual(invite, self.codeassess.service.frontend_url),
-            )
+            sent = None
+            try:
+                sent = self.email.send_assessment_invitation(
+                    recipient=candidate.email,
+                    candidate_name=candidate.name,
+                    job_title=generated.job_title,
+                    assessment_url=self.codeassess.build_invite_url_manual(invite, self.codeassess.service.frontend_url),
+                )
+            except Exception as mail_err:
+                print(f"[Pipeline] Email dispatch warning for {candidate.email}: {mail_err}")
+                sent = None
+
             updated = self.database.update_stage(candidate_id, "ASSESSMENT_SENT")
             return (
                 updated,

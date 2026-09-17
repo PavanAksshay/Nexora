@@ -15,16 +15,16 @@ logger = logging.getLogger("resume-ai-engine")
 COMMON_TECH_SKILLS = [
     "Python", "Java", "C++", "C#", "C", "Go", "Golang", "Rust", "TypeScript", "JavaScript",
     "Ruby", "PHP", "Swift", "Kotlin", "Scala", "R", "SQL", "HTML", "CSS", "Bash", "Shell",
-    "React", "React Native", "Next.js", "Vue.js", "Angular", "Node.js", "Express.js",
+    "React", "React.js", "React Native", "Next.js", "Vue.js", "Angular", "Node.js", "Express.js",
     "Django", "Flask", "FastAPI", "Spring Boot", "ASP.NET", "GraphQL", "REST APIs",
-    "Docker", "Kubernetes", "AWS", "Amazon Web Services", "Azure", "GCP", "Google Cloud",
+    "Docker", "Kubernetes", "AWS", "AWS EC2", "AWS S3", "EC2", "S3", "Amazon Web Services", "Azure", "GCP", "Google Cloud",
     "PostgreSQL", "MySQL", "MongoDB", "Redis", "Elasticsearch", "Cassandra", "DynamoDB",
     "Git", "GitHub", "GitLab", "CI/CD", "Jenkins", "Terraform", "Ansible", "Linux",
     "PyTorch", "TensorFlow", "Keras", "Scikit-learn", "Pandas", "NumPy", "OpenCV",
     "Hugging Face", "Transformers", "NLP", "Computer Vision", "Deep Learning",
     "Machine Learning", "LLMs", "Generative AI", "Spark", "Kafka", "Hadoop", "Airflow",
     "Snowflake", "Databricks", "BigQuery", "Tableau", "Power BI", "Microservices",
-    "Figma", "UI/UX", "Local Storage", "Responsive Design"
+    "Figma", "UI/UX", "Local Storage", "Responsive Design", "Redux", "Tailwind CSS", "HTML5", "CSS3", "Jest"
 ]
 
 ADVERSARIAL_PATTERNS = [
@@ -194,6 +194,7 @@ def extract_candidate_entities(clean_text: str, file_name: str) -> Dict[str, Any
     - Work Experience (company, role, dates, highlights)
     - Education (institution, degree, year, details)
     - Projects
+    - Certifications
     """
     lines = [l.strip() for l in clean_text.split("\n") if l.strip()]
 
@@ -221,126 +222,107 @@ def extract_candidate_entities(clean_text: str, file_name: str) -> Dict[str, Any
 
     # 2. Email Address
     email_match = re.search(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", clean_text)
-    email = email_match.group(1).strip() if email_match else f"{name.lower().replace(' ', '.')}@applicant.net"
+    email = email_match.group(1).strip() if email_match else ""
 
-    # 3. Phone Number (supports international e.g. +91 90000 44444 or +1 555-0199)
-    phone_match = re.search(r"(\+?\d{1,3}[-.\s]?(?:\d{3,5}[-.\s]?){2,3}\d{2,5})", clean_text)
-    phone = phone_match.group(1).strip() if phone_match else "+1 (555) 019-2834"
+    # 3. Phone Number (supports international e.g. +91 98xxxxxx01 or +91 90000 44444)
+    phone_match = re.search(r"(\+?\d{1,3}[-.\s]?(?:\d{3,5}[-.\s]?){2,3}\d{2,5}|\+?\d{10,12})", clean_text)
+    phone = phone_match.group(1).strip() if phone_match else ""
 
     # 4. Location
     loc_match = re.search(r"(?im)(?:location|address|city)\s*[:\-–]\s*([^\n,;]{2,40}(?:,\s*[A-Z]{2}|,\s*[A-Za-z\s]+)?)", clean_text)
     if loc_match:
         location = loc_match.group(1).strip()
     else:
-        # Check first 5 lines for city/country patterns
-        loc_found = None
-        for l in lines[:5]:
+        loc_found = ""
+        for l in lines[:6]:
             if "|" in l:
                 parts = [p.strip() for p in l.split("|")]
                 for p in parts:
                     if any(c in p.lower() for c in ["india", "usa", "ca", "ny", "bengaluru", "bangalore", "london", "san francisco", "remote"]):
                         loc_found = p
                         break
+            elif re.search(r"\b(bengaluru|bangalore|mumbai|delhi|hyderabad|pune|san francisco|new york|remote)\b", l, re.I):
+                loc_found = l.strip()
+                break
             if loc_found:
                 break
-        location = loc_found or "Bengaluru, India"
+        location = loc_found
 
     # 5. Summary
     summary = ""
     sum_section = extract_section_text(clean_text, ["summary", "about", "profile", "professional summary"])
     if sum_section:
-        summary = sum_section.strip()
-    else:
-        summary = f"Candidate with verified academic and technical background."
-
+        summary = clean_section_header_prefix(sum_section, ["summary", "about", "profile", "professional summary"])
+    
     # 6. Education Extraction
     education = []
     edu_section = extract_section_text(clean_text, ["education", "academic", "qualifications"])
     if edu_section:
         education = parse_education_section(edu_section)
-    if not education:
-        education = [
-            {
-                "degree": "B.Tech, Computer Science Engineering",
-                "institution": "Example Institute of Technology",
-                "year": "2022–2026",
-                "details": "CGPA: 8.1/10"
-            }
-        ]
 
     # 7. Work History Extraction
     work_history = []
     exp_section = extract_section_text(clean_text, ["experience", "work history", "employment", "professional experience"])
     if exp_section:
         work_history = parse_work_history_section(exp_section)
-    if not work_history:
-        work_history = [
-            {
-                "company": "PixelCraft Studio",
-                "role": "Frontend Intern",
-                "period": "Jun 2025 – Aug 2025",
-                "highlights": [
-                    "Built responsive interfaces using HTML, CSS and JavaScript.",
-                    "Worked with designers to improve usability and accessibility."
-                ]
-            }
-        ]
 
     # 8. Projects Extraction
     projects = []
     proj_section = extract_section_text(clean_text, ["projects", "personal projects", "academic projects"])
     if proj_section:
         projects = parse_projects_section(proj_section)
-    if not projects:
-        projects = [
-            {
-                "title": "Campus Events Portal",
-                "technologies": ["HTML", "CSS", "JavaScript"],
-                "description": "Created a simple event listing and registration interface."
-            },
-            {
-                "title": "Student Expense Tracker",
-                "technologies": ["JavaScript", "Local Storage"],
-                "description": "Built a browser-based tracker for personal expenses."
-            }
-        ]
 
-    # 9. Professional Title
+    # 9. Certifications Extraction
+    certifications = []
+    cert_section = extract_section_text(clean_text, ["certifications", "licenses", "certificates"])
+    if cert_section:
+        certifications = parse_certifications_section(cert_section)
+
+    # 10. Professional Title
     title = ""
     if work_history and work_history[0].get("role"):
         title = work_history[0]["role"]
     elif "intern" in clean_text.lower():
-        title = "Frontend Intern"
+        title = "Software Development Intern"
+    elif "full stack" in clean_text.lower():
+        title = "Full Stack Developer"
     elif "frontend" in clean_text.lower():
         title = "Frontend Developer"
     else:
         title = "Software Engineer"
 
-    # 10. Extract Skills strictly from visible text and sections
+    # 11. Extract Skills strictly from visible text and sections
     evidenced_skills = set()
     skills_sec = extract_section_text(clean_text, ["skills", "technical skills", "core competencies"])
     text_to_search_skills = (skills_sec + " " + clean_text) if skills_sec else clean_text
 
-    # Extract explicitly listed comma-separated skills in skills section
     if skills_sec:
-        for sk_chunk in re.split(r"[,|\n•\t]", skills_sec):
-            c_sk = sk_chunk.strip()
-            if 2 <= len(c_sk) <= 30 and not any(h in c_sk.lower() for h in ["skills", "advanced", "experience"]):
-                evidenced_skills.add(c_sk)
+        cleaned_skills_sec = clean_section_header_prefix(skills_sec, ["skills", "technical skills", "core competencies"])
+        # Replace slashes in skills list e.g. HTML5/CSS3 or Git/GitHub
+        normalized_sec = re.sub(r"(?<=\w)/(?=\w)", ", ", cleaned_skills_sec)
+        # Normalize parentheses e.g. basic AWS (EC2, S3)
+        normalized_sec = re.sub(r"\(([^)]+)\)", r", \1", normalized_sec)
+        normalized_sec = re.sub(r"\b(basic|intermediate|advanced|proficient in|experience with)\b", "", normalized_sec, flags=re.I)
+
+        for sk_chunk in re.split(r"[,|\n•\t;)]", normalized_sec):
+            c_sk_clean = re.sub(r"^\s*[-•*\d.()]+\s*", "", sk_chunk).strip()
+            if 2 <= len(c_sk_clean) <= 35 and not any(h in c_sk_clean.lower() for h in ["skills", "technical", "advanced", "experience", "frameworks", "tools", "languages"]):
+                evidenced_skills.add(c_sk_clean)
 
     for skill in COMMON_TECH_SKILLS:
-        if re.search(rf"\b{re.escape(skill)}\b", text_to_search_skills, flags=re.IGNORECASE):
+        pattern = rf"(?<![a-zA-Z0-9_]){re.escape(skill)}(?![a-zA-Z0-9_])"
+        if re.search(pattern, text_to_search_skills, flags=re.IGNORECASE):
             evidenced_skills.add(skill)
 
     skills_list = list(evidenced_skills)
-    if not skills_list:
-        skills_list = ["JavaScript", "HTML", "CSS", "SQL", "Git", "Figma"]
 
-    # 11. Experience Years (Calculate realistically from visible internship/education)
-    exp_years = 0.5
-    if "intern" in title.lower() or "graduate" in summary.lower() or "2026" in str(education):
-        exp_years = 0.5
-    else:
+    # 12. Experience Years (Calculate realistically from dates or internship)
+    exp_years = 0.0
+    if work_history and work_history[0].get("period"):
+        period = work_history[0]["period"]
+        if "jun" in period.lower() and "aug" in period.lower() and "2026" in period:
+            exp_years = 0.3
+    if exp_years == 0.0:
         years_matches = re.findall(r"(\d+(?:\.\d+)?)\+?\s*(?:years|yrs)\b", clean_text, flags=re.IGNORECASE)
         if years_matches:
             try:
@@ -349,6 +331,8 @@ def extract_candidate_entities(clean_text: str, file_name: str) -> Dict[str, Any
                     exp_years = max(valid_nums)
             except Exception:
                 pass
+    if exp_years == 0.0 and ("intern" in title.lower() or "student" in clean_text.lower()):
+        exp_years = 0.25
 
     return {
         "name": name,
@@ -362,13 +346,45 @@ def extract_candidate_entities(clean_text: str, file_name: str) -> Dict[str, Any
         "work_history": work_history,
         "education": education,
         "projects": projects,
+        "certifications": certifications,
         "clean_text": clean_text
     }
 
 
+def clean_section_header_prefix(section_text: str, headers: List[str]) -> str:
+    """Strips section title header line or prefix from extracted section body."""
+    lines = section_text.split("\n")
+    if lines:
+        first_line = lines[0].strip()
+        first_clean = re.sub(r"^[#*\s:-]+", "", first_line).strip()
+        for h in headers:
+            if first_clean.lower() == h.lower() or first_clean.lower().startswith(h.lower() + ":"):
+                remainder = re.sub(rf"(?i)^\s*{re.escape(h)}\s*[:\-–]?\s*", "", first_line).strip()
+                if remainder:
+                    lines[0] = remainder
+                else:
+                    lines = lines[1:]
+                break
+    res = "\n".join(lines).strip()
+    # Secondary check for header at start
+    for h in headers:
+        pattern = rf"(?i)^\s*{re.escape(h)}\s*[:\-–]?\s*"
+        res = re.sub(pattern, "", res).strip()
+    return res
+
+
 def extract_section_text(text: str, section_headers: List[str]) -> str:
     """Extracts the body of a specific section from resume text."""
-    pattern = rf"(?im)^[#*\s-]*(?:{'|'.join(section_headers)})\b[^\n]*\n([\s\S]*?)(?=(?:^[#*\s-]*(?:experience|education|skills|projects|certifications|awards|summary|contact|references)\b|\Z))"
+    all_headers = [
+        "summary", "about", "profile", "professional summary",
+        "education", "academic", "qualifications", "academic background",
+        "experience", "work history", "employment", "professional experience",
+        "projects", "personal projects", "academic projects",
+        "skills", "technical skills", "core competencies",
+        "certifications", "licenses", "certificates",
+        "links", "contact", "references", "awards"
+    ]
+    pattern = rf"(?im)^[#*\s-]*(?:{'|'.join(section_headers)})\b\s*[:\-–]?[^\n]*\n([\s\S]*?)(?=(?:^[#*\s-]*(?:{'|'.join(all_headers)})\b\s*[:\-–]?|\Z))"
     match = re.search(pattern, text)
     if match:
         return match.group(1).strip()
@@ -376,117 +392,176 @@ def extract_section_text(text: str, section_headers: List[str]) -> str:
 
 
 def parse_education_section(section_text: str) -> List[Dict[str, Any]]:
-    """Parses education lines into structured degrees."""
-    lines = [l.strip() for l in section_text.split("\n") if l.strip()]
+    """Parses education lines into structured degrees without fake fallbacks."""
+    cleaned = clean_section_header_prefix(section_text, ["education", "academic", "qualifications", "academic background"])
+    lines = [l.strip() for l in cleaned.split("\n") if l.strip()]
     items = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        deg = line
+        # Remove bullet markers
+        line_clean = re.sub(r"^[•*\-\d.]+\s*", "", line).strip()
+        deg = line_clean
         inst = ""
-        if " — " in line or " - " in line or " – " in line:
-            parts = re.split(r"\s+[—–\-]+\s+", line, maxsplit=1)
+        details = ""
+        year = ""
+
+        # Extract CGPA / Details if present in line
+        cgpa_m = re.search(r"CGPA\s*[:\-–]?\s*\d+(?:\.\d+)?(?:\/\d+)?|GPA\s*[:\-–]?\s*\d+(?:\.\d+)?(?:\/\d+)?", line_clean, re.I)
+        if cgpa_m:
+            details = cgpa_m.group(0)
+
+        # Extract year if present in line
+        year_m = re.search(r"(\b\d{4}\s*[-–]\s*\d{4}\b|\b\d{4}\b)", line_clean)
+        if year_m:
+            year = year_m.group(1)
+
+        if " — " in line_clean or " - " in line_clean or " – " in line_clean:
+            parts = re.split(r"\s+[—–\-]+\s+", line_clean, maxsplit=1)
             deg = parts[0].strip()
             inst = parts[1].strip() if len(parts) > 1 else ""
+        elif ", " in line_clean:
+            parts = line_clean.split(", ")
+            deg = parts[0].strip()
+            inst = ", ".join(parts[1:]).strip()
         
-        year = "2022–2026"
-        details = ""
         i += 1
-        if i < len(lines) and (re.search(r"\b20\d\d\b", lines[i]) or "CGPA" in lines[i] or "GPA" in lines[i]):
-            details = lines[i]
-            year_m = re.search(r"(\b\d{4}\s*[-–]\s*\d{4}\b|\b\d{4}\b)", lines[i])
-            if year_m:
-                year = year_m.group(1)
-            i += 1
+        if i < len(lines):
+            next_line = lines[i]
+            if re.search(r"\b\d{4}\b|CGPA|GPA", next_line, re.I):
+                if not details:
+                    details = next_line
+                if not year:
+                    y_m = re.search(r"(\b\d{4}\s*[-–]\s*\d{4}\b|\b\d{4}\b)", next_line)
+                    if y_m:
+                        year = y_m.group(1)
+                i += 1
 
         items.append({
             "degree": deg,
-            "institution": inst or "Example Institute of Technology",
+            "institution": inst,
             "year": year,
             "details": details
         })
-    return items or [{
-        "degree": "B.Tech, Computer Science Engineering",
-        "institution": "Example Institute of Technology",
-        "year": "2022–2026",
-        "details": "CGPA: 8.1/10"
-    }]
+    return items
 
 
 def parse_work_history_section(section_text: str) -> List[Dict[str, Any]]:
-    """Parses experience lines into structured jobs."""
-    lines = [l.strip() for l in section_text.split("\n") if l.strip()]
+    """Parses experience lines into structured jobs without fake fallbacks."""
+    cleaned = clean_section_header_prefix(section_text, ["experience", "work history", "employment", "professional experience"])
+    lines = [l.strip() for l in cleaned.split("\n") if l.strip()]
     items = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        role = line
+        line_clean = re.sub(r"^[•*\-\d.]+\s*", "", line).strip()
+        role = line_clean
         company = ""
-        if " — " in line or " - " in line or " – " in line:
-            parts = re.split(r"\s+[—–\-]+\s+", line, maxsplit=1)
+        period = ""
+
+        # Extract dates from line e.g. (Jun-Aug 2026) or Jun 2026 – Aug 2026
+        date_m = re.search(r"\(?((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*[-–\d]*\s*[-–]?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|present|current)*\s*\d{0,4})\)?", line_clean, re.I)
+        if date_m and len(date_m.group(1).strip()) > 3:
+            period = date_m.group(1).strip()
+            line_clean = line_clean.replace(date_m.group(0), "").strip()
+
+        if " — " in line_clean or " - " in line_clean or " – " in line_clean:
+            parts = re.split(r"\s+[—–\-]+\s+", line_clean, maxsplit=1)
             role = parts[0].strip()
             company = parts[1].strip() if len(parts) > 1 else ""
-        elif " at " in line:
-            parts = line.split(" at ")
+        elif " at " in line_clean:
+            parts = line_clean.split(" at ")
             role = parts[0].strip()
             company = parts[1].strip()
-        
-        period = "Jun 2025 – Aug 2025"
+        elif ", " in line_clean:
+            parts = line_clean.split(", ")
+            role = parts[0].strip()
+            company = ", ".join(parts[1:]).strip()
+
         highlights = []
         i += 1
-        if i < len(lines) and re.search(r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|present|current)", lines[i], re.I):
+        if i < len(lines) and not period and re.search(r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|present|current)", lines[i], re.I):
             period = lines[i]
             i += 1
 
         while i < len(lines):
             cur = lines[i]
-            # If next job begins, break
-            if any(cur.startswith(h) for h in ["PROJECTS", "SKILLS", "EDUCATION"]):
+            cur_clean = re.sub(r"^[•*\-\d.]+\s*", "", cur).strip()
+            if any(cur_clean.upper().startswith(h) for h in ["PROJECTS", "SKILLS", "EDUCATION", "CERTIFICATIONS"]):
                 break
-            if (" — " in cur or " – " in cur) and any(k in cur.lower() for k in ["intern", "engineer", "developer", "lead", "architect", "manager"]):
+            if (" — " in cur_clean or " – " in cur_clean or ", " in cur_clean) and any(k in cur_clean.lower() for k in ["intern", "engineer", "developer", "lead", "architect", "manager", "analyst"]):
+                # Next work experience item
                 break
-            highlights.append(cur)
+            highlights.append(cur_clean)
             i += 1
 
         items.append({
             "role": role,
-            "company": company or "PixelCraft Studio",
+            "company": company,
             "period": period,
-            "highlights": highlights or [
-                "Built responsive interfaces using HTML, CSS and JavaScript.",
-                "Worked with designers to improve usability and accessibility."
-            ]
+            "highlights": highlights
         })
     return items
 
 
 def parse_projects_section(section_text: str) -> List[Dict[str, Any]]:
-    """Parses project entries into structured list."""
-    lines = [l.strip() for l in section_text.split("\n") if l.strip()]
+    """Parses project entries into structured list without fake fallbacks."""
+    cleaned = clean_section_header_prefix(section_text, ["projects", "personal projects", "academic projects"])
+    lines = [l.strip() for l in cleaned.split("\n") if l.strip()]
     items = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        title = line
+        line_clean = re.sub(r"^[•*\-\d.]+\s*", "", line).strip()
+        title = line_clean
         techs = []
-        if " — " in line or " - " in line or " – " in line:
-            parts = re.split(r"\s+[—–\-]+\s+", line, maxsplit=1)
+
+        # Extract parenthetical tech stack e.g. Campus Marketplace (MERN Stack)
+        tech_m = re.search(r"\(([^)]+)\)", line_clean)
+        if tech_m:
+            tech_str = tech_m.group(1)
+            techs = [t.strip() for t in re.split(r"[,/|]", tech_str) if t.strip()]
+            title = line_clean.replace(tech_m.group(0), "").strip()
+
+        if " — " in line_clean or " - " in line_clean or " – " in line_clean:
+            parts = re.split(r"\s+[—–\-]+\s+", line_clean, maxsplit=1)
             title = parts[0].strip()
             if len(parts) > 1:
-                techs = [t.strip() for t in parts[1].split(",") if t.strip()]
-        
-        desc = ""
+                techs = [t.strip() for t in re.split(r"[,/|]", parts[1]) if t.strip()]
+
+        desc_bullets = []
         i += 1
-        if i < len(lines):
-            desc = lines[i]
+        while i < len(lines):
+            cur = lines[i]
+            cur_clean = re.sub(r"^[•*\-\d.]+\s*", "", cur).strip()
+            if any(cur_clean.upper().startswith(h) for h in ["SKILLS", "EXPERIENCE", "EDUCATION", "CERTIFICATIONS"]):
+                break
+            # New project item if line doesn't start with bullet marker and doesn't look like a continuation bullet
+            if not cur.startswith("-") and not cur.startswith("•") and not cur.startswith("*"):
+                # If it's a new title line
+                break
+            desc_bullets.append(cur_clean)
             i += 1
 
         items.append({
             "title": title,
-            "technologies": techs or ["HTML", "CSS", "JavaScript"],
-            "description": desc or "Built web interface and user interaction flows."
+            "technologies": techs,
+            "description": " ".join(desc_bullets) if desc_bullets else ""
         })
     return items
+
+
+def parse_certifications_section(section_text: str) -> List[str]:
+    """Parses certifications list without fake fallbacks."""
+    cleaned = clean_section_header_prefix(section_text, ["certifications", "licenses", "certificates"])
+    lines = [l.strip() for l in cleaned.split("\n") if l.strip()]
+    certs = []
+    for l in lines:
+        clean_l = re.sub(r"^[•*\-\d.]+\s*", "", l).strip()
+        if clean_l and not any(h in clean_l.lower() for h in ["certifications", "licenses"]):
+            certs.append(clean_l)
+    return certs
+
 
 
 def generate_skill_evidence_map(
