@@ -17,19 +17,33 @@ export const firebaseAuth = {
   observe(callback: (user: User | null) => void) {
     return auth ? onAuthStateChanged(auth, callback) : () => undefined;
   },
-  async signIn() {
-    if (!auth) return null;
+  async signIn(): Promise<User | null> {
+    if (!auth) {
+      throw new Error('Firebase Google Authentication is not configured. Please supply VITE_FIREBASE_* environment variables.');
+    }
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     try {
-      const res = await signInWithPopup(auth, new GoogleAuthProvider());
+      const res = await signInWithPopup(auth, provider);
       return res.user;
     } catch (err: any) {
-      if (err?.code !== 'auth/popup-closed-by-user') {
-        console.warn('Firebase Google Auth error:', err);
+      if (err?.code === 'auth/popup-closed-by-user') {
+        throw new Error('Google sign-in popup was closed before completing authentication.');
       }
-      return null;
+      if (err?.code === 'auth/popup-blocked') {
+        throw new Error('Google sign-in popup was blocked by browser. Please allow popups for this site.');
+      }
+      if (err?.code === 'auth/unauthorized-domain') {
+        throw new Error('This domain is not authorized in Firebase Console (Authentication > Settings > Authorized domains).');
+      }
+      if (err?.code === 'auth/invalid-api-key') {
+        throw new Error('Invalid Firebase API key in VITE_FIREBASE_API_KEY.');
+      }
+      console.warn('Firebase Google Auth error:', err);
+      throw new Error(err?.message || 'Google sign-in failed.');
     }
   },
-  async signOut() {
+  async signOut(): Promise<void> {
     return auth ? signOut(auth) : Promise.resolve();
   },
 };

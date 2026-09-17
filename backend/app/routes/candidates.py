@@ -23,13 +23,16 @@ router = APIRouter(prefix="/api", tags=["candidates"])
 
 
 @router.get("/candidates/{candidate_id}/assessment/generate")
-def generate_assessment(
+async def generate_assessment(
     candidate_id: str,
     request: Request,
     _: RecruiterIdentity = Depends(get_current_recruiter),
 ):
     try:
-        payload = request.json() if request.json() else {}
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
         job_description = payload if isinstance(payload, dict) else {}
         generated = _pipeline(request).generate_assessment(candidate_id, job_description)
         return {
