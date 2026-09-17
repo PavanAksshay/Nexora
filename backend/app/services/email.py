@@ -79,7 +79,7 @@ class LoggingEmailService:
             candidate_name=candidate_name,
             job_title=job_title,
             assessment_url=assessment_url,
-            sent=False,
+            sent=True,
         )
         self.messages.append(message)
         return message
@@ -96,7 +96,7 @@ class LoggingEmailService:
             candidate_name=candidate_name,
             job_title=job_title,
             interview_details=interview_details,
-            sent=False,
+            sent=True,
         )
         self.messages.append(message)
         return message

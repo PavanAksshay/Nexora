@@ -11,8 +11,19 @@ import {
   Loader2 
 } from 'lucide-react';
 import { toast } from 'sonner';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+function SimpleMarkdown({ content }: { content: string }) {
+  const lines = content.split('\n');
+  return (
+    <div>
+      {lines.map((line, idx) => {
+        if (line.startsWith('# ')) return <h3 key={idx} style={{ fontSize: '15px', margin: '4px 0' }}>{line.slice(2)}</h3>;
+        if (line.startsWith('## ')) return <h4 key={idx} style={{ fontSize: '14px', margin: '4px 0' }}>{line.slice(3)}</h4>;
+        if (line.startsWith('- ') || line.startsWith('* ')) return <li key={idx} style={{ marginLeft: '16px' }}>{line.slice(2)}</li>;
+        return <p key={idx} style={{ margin: line ? '4px 0' : '8px 0' }}>{line}</p>;
+      })}
+    </div>
+  );
+}
 import { chatWithRecruiter } from '../services/api';
 import type { Candidate, ChatMessage } from '../types';
 
@@ -333,9 +344,7 @@ export function RecruiterChatbot({ candidates }: RecruiterChatbotProps) {
                     <div className="chat-bubble">
                       <div className="chat-bubble-text">
                         {m.role === 'assistant' ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {m.content}
-                          </ReactMarkdown>
+                          <SimpleMarkdown content={m.content} />
                         ) : (
                           m.content
                         )}

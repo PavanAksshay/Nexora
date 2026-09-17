@@ -10,12 +10,16 @@ from ..schemas import (
     AssessmentResponse,
     CandidateResponse,
     HRDecisionRequest,
+    HRDecisionResponse,
     RankingResponse,
     ShortlistResponse,
 )
 from ..services.pipeline import PipelineError, _email_description
 
+import sys as _sys
+
 router = APIRouter(prefix="/api", tags=["candidates"])
+
 
 
 @router.get("/candidates/{candidate_id}/assessment/generate")
@@ -157,16 +161,25 @@ def send_generated_assessment(
         if not isinstance(job_description, dict):
             job_description = {}
         generated = _pipeline(request).generate_assessment(candidate_id, job_description)
-        candidate, assessment_id, link, invite_url, sent, link_obj = _pipeline(request).create_generated_assessment(
+        candidate, assessment_id_raw, link, invite_url, sent, link_obj, *_ = _pipeline(request).create_generated_assessment(
             candidate_id, generated
         )
-        assessment_id = assessment_id if isinstance(assessment_id, int) else getattr(assessment_id, "id", 0)
-        return {
+        assessment_id = assessment_id_raw if isinstance(assessment_id_raw, int) else getattr(assessment_id_raw, "id", 0)
+        def _link_attr(link, names):
+            current = link
+            for name in names:
+                try:
+                    current = getattr(current, name)
+                except Exception:
+                    return None
+            return current
+
+        payload = {
             "candidate_id": candidate_id,
             "assessment_id": assessment_id,
-            "invite_id": getattr(link, "id", link.invite_id if hasattr(link, "invite_id") else None),
-            "token": getattr(link, "token", link.invite.token if hasattr(link, "invite") else None),
-            "status": getattr(link, "status", link.invite.status if hasattr(link, "invite") else None),
+            "invite_id": _link_attr(link, ["id"]) or _link_attr(link, ["invite_id"]),
+            "token": _link_attr(link, ["token"]) or _link_attr(link, ["invite", "token"]),
+            "status": _link_attr(link, ["status"]) or _link_attr(link, ["invite", "status"]),
             "invite_url": invite_url,
             "assessment": {
                 "title": generated.definition.title,
@@ -185,13 +198,11 @@ def send_generated_assessment(
                     for q in generated.questions_used
                 ],
             },
-            "email_sent": sent.sent if sent is not None else False,
-            "email": _email_description(sent) if sent is not None else None,
+            "email_sent": getattr(sent, "sent", bool(sent)) if sent is not None else False,
+            "email": _email_description(sent) if hasattr(sent, "recipient") else None,
             "stage": candidate.current_stage,
         }
-    except PipelineError as exc:
-        code = 404 if "not found" in str(exc) else 409
-        raise HTTPException(status_code=code, detail=str(exc)) from exc
+        return payload
     except PipelineError as exc:
         code = 404 if "not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
@@ -243,7 +254,7 @@ def evidence_comparison(
         raise HTTPException(status_code=502, detail="Assessment evidence unavailable") from exc
 
 
-@router.post("/candidates/{candidate_id}/hr-decision", response_model=CandidateResponse)
+@router.post("/candidates/{candidate_id}/hr-decision", response_model=HRDecisionResponse)
 def hr_decision(
     candidate_id: str,
     payload: HRDecisionRequest,

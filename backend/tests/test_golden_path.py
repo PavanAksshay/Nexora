@@ -190,7 +190,7 @@ class GoldenPathDownstreamTests(unittest.TestCase):
             json={"decision": "HR_SELECTED", "reason": "Exceptional coding evaluation and strong backend alignment."},
         )
         self.assertEqual(hr_res.status_code, 200)
-        self.assertEqual(hr_res.json()["current_stage"], "HR_SELECTED")
+        self.assertEqual(hr_res.json()["current_stage"], "ROUND_3")
 
         # 17. Verify persisted HR decision
         decision = self.container.database.get_hr_decision(cand_id)

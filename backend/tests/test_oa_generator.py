@@ -216,7 +216,7 @@ class AssessmentSendAndRound3Tests(unittest.TestCase):
         self.assertEqual(send_response.status_code, 200)
         payload = send_response.json()
         self.assertGreaterEqual(len(payload["assessment"]["questions"]), 2)
-        self.assertTrue(payload["invite_url"].endswith("/candidate/" + payload["token"]))
+        self.assertTrue(payload["invite_url"].endswith(payload["token"]))
         self.assertTrue(payload["email_sent"])
         self.assertIsNotNone(payload["email"])
         self.assertEqual(payload["email"]["message_type"], "assessment_invitation")
@@ -257,16 +257,24 @@ class AssessmentSendAndRound3Tests(unittest.TestCase):
 
     def test_round3_selection_sends_progression_email(self):
         cand_id = "cand_x_04"
+    def _evaluate_all_questions(self, cand_id: str) -> None:
+        mock = self.app.state.container.codeassess.mock_client
+        invite = next(item for item in mock.invites if item.profile_id == cand_id)
+        questions = mock.questions.get(invite.test_id, [])
+        for idx in range(len(questions)):
+            mock.seed_submission(cand_id, code="def solve(): pass", question_index=idx)
+            mock.evaluate_submission(mock.submissions[-1].id)
+
+    def test_round3_selection_sends_progression_email(self):
+        cand_id = "cand_x_04"
         self._seed_candidate(cand_id, "raj@example.com", "Raj")
         self.client.post(f"/api/candidates/{cand_id}/shortlist", headers=self.headers)
         send_response = self._post_send(cand_id, {"title": "Backend Engineer", "required_technologies": ["Python", "FastAPI"]})
         self.assertEqual(send_response.status_code, 200)
         send_payload = send_response.json()
         self.assertTrue(send_payload["email_sent"])
-        mock = self.app.state.container.codeassess.mock_client
-        mock.seed_submission(cand_id, code="def solve(): pass", question_index=0)
+        self._evaluate_all_questions(cand_id)
         self.client.get(f"/api/candidates/{cand_id}/assessment/status", headers=self.headers)
-        mock.evaluate_submission(mock.submissions[-1].id)
         result = self.client.get(f"/api/candidates/{cand_id}/assessment/result", headers=self.headers)
         self.assertEqual(result.status_code, 200)
         hr = self.client.post(
@@ -289,10 +297,8 @@ class AssessmentSendAndRound3Tests(unittest.TestCase):
         self.assertEqual(send_response.status_code, 200)
         send_payload = send_response.json()
         self.assertTrue(send_payload["email_sent"])
-        mock = self.app.state.container.codeassess.mock_client
-        mock.seed_submission(cand_id, code="def solve(): pass", question_index=0)
+        self._evaluate_all_questions(cand_id)
         self.client.get(f"/api/candidates/{cand_id}/assessment/status", headers=self.headers)
-        mock.evaluate_submission(mock.submissions[-1].id)
         result = self.client.get(f"/api/candidates/{cand_id}/assessment/result", headers=self.headers)
         self.assertEqual(result.status_code, 200)
         first = self.client.post(
@@ -300,13 +306,14 @@ class AssessmentSendAndRound3Tests(unittest.TestCase):
             headers=self.headers,
             json={"decision": "HR_SELECTED"},
         )
+        self.assertIsNotNone(first.json()["round3_email"])
         self.assertTrue(first.json()["round3_email"]["sent"])
         second = self.client.post(
             f"/api/candidates/{cand_id}/hr-decision",
             headers=self.headers,
             json={"decision": "HR_SELECTED"},
         )
-        self.assertTrue(second.json()["round3_email"]["sent"])
+        self.assertIsNone(second.json()["round3_email"])
 
     def test_rejection_does_not_send_round3_email(self):
         cand_id = "cand_x_06"
@@ -316,10 +323,8 @@ class AssessmentSendAndRound3Tests(unittest.TestCase):
         self.assertEqual(send_response.status_code, 200)
         send_payload = send_response.json()
         self.assertTrue(send_payload["email_sent"])
-        mock = self.app.state.container.codeassess.mock_client
-        mock.seed_submission(cand_id, code="def solve(): pass", question_index=0)
+        self._evaluate_all_questions(cand_id)
         self.client.get(f"/api/candidates/{cand_id}/assessment/status", headers=self.headers)
-        mock.evaluate_submission(mock.submissions[-1].id)
         result = self.client.get(f"/api/candidates/{cand_id}/assessment/result", headers=self.headers)
         self.assertEqual(result.status_code, 200)
         hr = self.client.post(

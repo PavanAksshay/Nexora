@@ -90,7 +90,7 @@ class NexoraApiTests(unittest.TestCase):
             headers=self.headers(),
             json={"decision": "HR_SELECTED", "reason": "Evidence supports backend capability"},
         )
-        self.assertEqual(decision.json()["current_stage"], "HR_SELECTED")
+        self.assertEqual(decision.json()["current_stage"], "ROUND_3")
         chat = self.client.post(
             "/api/recruiter/chat",
             headers=self.headers(),

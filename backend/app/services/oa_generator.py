@@ -69,11 +69,10 @@ def _synthesize_questions(jd: dict[str, Any], candidate: CandidateRecord) -> lis
         return questions
 
     # Keep to a short assessment; total expectation is roughly 60 minutes.
-    weights = _weight_questions(core, jd)
-    selected = _select_questions(weights)
+    weighted = _weight_questions(core, jd)
 
     total_estimated = 0
-    for item in selected:
+    for item in weighted:
         skill = item["skill"]
         estimate = item["estimate_minutes"]
         questions.append(
@@ -89,11 +88,11 @@ def _synthesize_questions(jd: dict[str, Any], candidate: CandidateRecord) -> lis
         )
         total_estimated += estimate
 
-    questions = [q if isinstance(q, QuestionDefinition) else QuestionDefinition(**q) for q in questions]
+    if not questions or total_estimated == 0:
+        return questions
 
     # Normalize so the assessment is designed for roughly 60 minutes total.
-    if questions and total_estimated != 60:
-        factor = 60 / total_estimated
+    if total_estimated != 60:
         normalized: list[QuestionDefinition] = []
         remaining = 60
         for idx, q in enumerate(questions):
@@ -108,7 +107,9 @@ def _synthesize_questions(jd: dict[str, Any], candidate: CandidateRecord) -> lis
             normalized[-1] = normalized[-1].model_copy(update={"estimate_minutes": remaining})
         questions = normalized
 
+    questions = [q if isinstance(q, QuestionDefinition) else QuestionDefinition.model_validate(q) for q in questions]
     return questions
+
 
 
 def _extract_requirements(jd: dict[str, Any]) -> list[dict[str, Any]]:
@@ -174,19 +175,47 @@ def re_split(text: str) -> list[str]:
 
 
 def _prioritize(requirements: list[dict[str, Any]], candidate_skills: list[str]) -> list[dict[str, Any]]:
-    if not requirements:
-        return []
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     candidate_norm = [s.lower() for s in candidate_skills]
-    for item in sorted(requirements, key=lambda x: -x["weight"]):
-        key = item["skill"].lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        item = dict(item)
-        item["matched_by_candidate"] = key in candidate_norm
-        out.append(item)
+    if requirements:
+        for item in sorted(requirements, key=lambda x: -x["weight"]):
+            key = item["skill"].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            item = dict(item)
+            item["matched_by_candidate"] = key in candidate_norm
+            out.append(item)
+
+    # If fewer than 2 items, supplement from candidate skills
+    if len(out) < 2:
+        for skill in candidate_skills:
+            key = skill.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append({
+                    "skill": skill,
+                    "context": f"Candidate experience with {skill}.",
+                    "weight": 1,
+                    "matched_by_candidate": True,
+                })
+                if len(out) >= 3:
+                    break
+
+    # If still fewer than 2 items, add structured fallback questions
+    fallbacks = [
+        {"skill": "System Architecture & API Design", "context": "Design robust API contract, input validation, and error boundaries.", "weight": 1, "matched_by_candidate": False},
+        {"skill": "Algorithmic Logic & Edge Cases", "context": "Implement core logic with optimal execution efficiency and test cases.", "weight": 1, "matched_by_candidate": False},
+    ]
+    for fallback in fallbacks:
+        if len(out) >= 2:
+            break
+        key = fallback["skill"].lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(fallback)
+
     return out
 
 
@@ -196,7 +225,7 @@ def _weight_questions(
     seniority = str(jd.get("seniority") or "mid").lower()
     base_minutes = 25 if seniority in ("senior", "lead", "staff") else 20
     out: list[dict[str, Any]] = []
-    for idx, item in enumerate(core):
+    for idx, item in enumerate(core[:3]):
         item = dict(item)
         item["estimate_minutes"] = base_minutes if idx == 0 else 20
         out.append(item)
@@ -229,9 +258,43 @@ def _question_type(item: dict[str, Any]) -> str:
     return "coding"
 
 
-def _select_questions(core: list[dict[str, Any]], max_questions: int = 3) -> list[dict[str, Any]]:
-    """Select up to max_questions from the prioritized core list."""
-    return core[:max_questions]
+def _select_questions(core: list[dict[str, Any]], max_questions: int = 3) -> list[QuestionDefinition]:
+    """Select up to max_questions from the prioritized core list and build QuestionDefinition models."""
+    questions: list[QuestionDefinition] = []
+    total_estimated = 0
+    for item in core[:max_questions]:
+        skill = item["skill"]
+        estimate = item.get("estimate_minutes", 20)
+        questions.append(
+            QuestionDefinition(
+                question_text=_question_text(item, None),
+                language=_question_language(item),
+                difficulty="medium",
+                type=_question_type(item),
+                skills=[skill],
+                source_requirements=[skill],
+                estimate_minutes=estimate,
+            )
+        )
+        total_estimated += estimate
+
+    if questions and total_estimated != 60:
+        normalized: list[QuestionDefinition] = []
+        remaining = 60
+        for idx, q in enumerate(questions):
+            next_count = len(questions) - idx
+            share = max(5, round(60 * (q.estimate_minutes / total_estimated)))
+            assigned = max(5, min(remaining - (next_count - 1) * 5, share))
+            assigned = min(assigned, remaining - (next_count - 1) * 5)
+            assigned = max(5, assigned)
+            normalized.append(q.model_copy(update={"estimate_minutes": assigned}))
+            remaining -= assigned
+        if normalized and normalized[-1].estimate_minutes != remaining:
+            normalized[-1] = normalized[-1].model_copy(update={"estimate_minutes": remaining})
+        questions = normalized
+
+    questions = [q if isinstance(q, QuestionDefinition) else QuestionDefinition.model_validate(q) for q in questions]
+    return questions
 
 
 def _openrouter_generate(
@@ -408,35 +471,22 @@ def generate_assessment(
         raise ValueError("Job description is required to generate an assessment")
 
     definition: AssessmentDefinition
+    questions: list[QuestionDefinition]
+
     if use_llm:
         try:
             definition = _openrouter_generate(jd, candidate, model=None, timeout=llm_timeout)
-        except (_OpenRouterUnavailable, _MalformedGenerationOutput):
-            definition = _fallback_definition(
-                job_title, candidate, _synthesize_questions(jd, candidate)
-            )
+            questions = definition.questions
+        except Exception:
+            questions = _synthesize_questions(jd, candidate)
+            definition = _fallback_definition(job_title, candidate, questions)
     else:
         questions = _synthesize_questions(jd, candidate)
         definition = _fallback_definition(job_title, candidate, questions)
 
-    if not definition.questions:
+    if not questions or len(questions) < 2:
         raise ValueError("Could not generate assessment questions for this JD and candidate")
 
-    total_minutes = sum(q.estimate_minutes for q in definition.questions)
-    if total_minutes < 15 or total_minutes > 180:
-        definition = definition.model_copy(
-            update={"duration_minutes": max(15, min(180, total_minutes))}
-        )
-
-    core = _prioritize(_extract_requirements(jd), _extract_candidate_skills(candidate))
-    if not core:
-        raise ValueError("Could not generate assessment questions for this JD and candidate")
-
-    questions = _select_questions(_weight_questions(core, jd))
-    if not questions:
-        raise ValueError("Could not generate assessment questions for this JD and candidate")
-
-    # Normalize so the assessment is designed for roughly 60 minutes total.
     questions = _ensure_question_models(questions)
 
     total_estimated = sum(q.estimate_minutes for q in questions)
@@ -458,13 +508,11 @@ def generate_assessment(
             normalized[-1] = normalized[-1].model_copy(update={"estimate_minutes": remaining})
         questions = normalized
 
-    questions = [q if isinstance(q, QuestionDefinition) else QuestionDefinition(**q) for q in questions]
-
     definition = AssessmentDefinition(
         title=f"{job_title} Technical Assessment",
         description=(
             f"Personalized technical assessment for {candidate_name} "
-            f"for the {job_title} position. Questions are derived from the job "
+            f"for the {job_title} position (approximately 60 minutes). Questions are derived from the job "
             f"description and the candidate's resume/claimed skills."
         ),
         duration_minutes=60,
@@ -481,19 +529,26 @@ def generate_assessment(
     )
 
 
+def _ensure_question_models(questions: list[Any]) -> list[QuestionDefinition]:
+    """Coerce raw dict items into validated QuestionDefinition models."""
+    return [q if isinstance(q, QuestionDefinition) else QuestionDefinition.model_validate(q) for q in questions]
+
+
 def _fallback_definition(
     job_title: str,
     candidate: CandidateRecord,
     questions: list[QuestionDefinition],
 ) -> AssessmentDefinition:
-    estimate = sum(q.estimate_minutes for q in questions)
     return AssessmentDefinition(
         title=f"{job_title} Technical Assessment",
         description=(
             f"Personalized technical assessment for {candidate.candidate_name} "
-            f"for the {job_title} position. Questions are derived from the job "
+            f"for the {job_title} position (approximately 60 minutes). Questions are derived from the job "
             f"description and the candidate's resume/claimed skills."
         ),
-        duration_minutes=max(15, min(180, estimate)),
+        duration_minutes=60,
         questions=questions,
     )
+
+
+

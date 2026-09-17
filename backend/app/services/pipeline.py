@@ -136,16 +136,30 @@ class PipelineService:
         can show generated questions before anything is sent to CodeAssess.
         """
         candidate = self.candidate(candidate_id)
-        if candidate.current_stage != "SHORTLISTED":
+        if candidate.current_stage != "SHORTLISTED" and self.database.get_assessment_link(candidate_id) is None:
             raise PipelineError(
-                "Candidate must be shortlisted before assessment generation"
+                f"Candidate must be shortlisted before assessment generation; current stage is {candidate.current_stage}"
             )
         provider_candidate = self.provider.get_candidate(candidate_id)
         if provider_candidate is None:
             raise PipelineError(f"Candidate data unavailable for {candidate_id}")
-        return generate_assessment(job_description, provider_candidate, use_llm=True)
 
-    def create_generated_assessment(self, candidate_id: str, generated: GeneratedAssessment) -> tuple:
+        jd_to_use = dict(job_description or {})
+        analysis = self.database.get_analysis(candidate.analysis_id)
+        if analysis and not jd_to_use.get("title"):
+            jd_to_use["title"] = analysis.job_title
+        ranking = self.provider.get_candidate_ranking(candidate_id)
+        if ranking:
+            if not jd_to_use.get("required_technologies"):
+                jd_to_use["required_technologies"] = list(ranking.matched_skills + ranking.missing_skills)
+            if not jd_to_use.get("description"):
+                jd_to_use["description"] = f"Technical role for {jd_to_use.get('title', 'Software Engineer')}."
+
+        return generate_assessment(jd_to_use, provider_candidate, use_llm=True)
+
+    def create_generated_assessment(
+        self, candidate_id: str, generated: GeneratedAssessment
+    ) -> tuple:
         """Persist a previously generated assessment into CodeAssess and email it.
 
         This pathway is used after the recruiter approves the generated questions.
@@ -164,6 +178,7 @@ class PipelineService:
             "ASSESSMENT_EVALUATED",
             "HR_REVIEW",
             "HR_SELECTED",
+            "ROUND_3",
         }:
             return (
                 candidate,
@@ -172,6 +187,8 @@ class PipelineService:
                 existing_link.invite_url,
                 False,
                 existing_link,
+                existing_link.token,
+                existing_link.status,
             )
 
         if candidate.current_stage not in {"SHORTLISTED", "ASSESSMENT_PENDING"}:
@@ -179,6 +196,8 @@ class PipelineService:
                 f"Candidate must be shortlisted before assessment creation; current stage is {candidate.current_stage}"
             )
 
+        # Do not allow a candidate into the pending state if another pending
+        # assessment is still being processed for them.
         if candidate_id in self._pending_assessments:
             raise PipelineError("An assessment is already being processed for this candidate")
 
@@ -220,11 +239,20 @@ class PipelineService:
             sent = self.email.send_assessment_invitation(
                 recipient=candidate.email,
                 candidate_name=candidate.name,
-                job_title=self.assessment_title,
-                assessment_url=invite_url,
+                job_title=generated.job_title,
+                assessment_url=self.codeassess.build_invite_url_manual(invite, self.codeassess.service.frontend_url),
             )
             updated = self.database.update_stage(candidate_id, "ASSESSMENT_SENT")
-            return updated, assessment, invite, invite_url, sent, link
+            return (
+                updated,
+                assessment,
+                invite,
+                invite_url,
+                sent,
+                link,
+                link.token,
+                link.status,
+            )
         except Exception as exc:
             self.database.update_stage(candidate_id, previous_stage)
             raise PipelineError(f"Assessment creation failed: {exc}") from exc
@@ -291,11 +319,15 @@ class PipelineService:
         normalized = decision.upper()
         if normalized not in {"HR_SELECTED", "REJECTED"}:
             raise PipelineError("decision must be HR_SELECTED or REJECTED")
+
+        if candidate.current_stage == normalized or (candidate.current_stage == "ROUND_3" and normalized == "HR_SELECTED"):
+            return candidate, None
+
         if candidate.current_stage == "ASSESSMENT_EVALUATED":
-            self.database.update_stage(candidate_id, "HR_REVIEW")
+            candidate = self.database.update_stage(candidate_id, "HR_REVIEW")
         elif candidate.current_stage != "HR_REVIEW":
             raise PipelineError("Candidate must be evaluated before HR decision")
-        updated = self.database.update_stage(candidate_id, normalized)
+
         now = datetime.now(timezone.utc).isoformat()
         self.database.save_hr_decision(
             HRDecision(
@@ -307,15 +339,21 @@ class PipelineService:
         )
         if normalized == "HR_SELECTED":
             updated = self.database.update_stage(candidate_id, "ROUND_3")
-            sent = self.email.send_round3_invitation(
-                recipient=candidate.email,
-                candidate_name=candidate.name,
-                job_title=self.assessment_title,
-                interview_details=None,
-            )
-            self._sent_round3_emails.add(candidate_id)
-            return updated, sent
+            if candidate_id not in self._sent_round3_emails:
+                sent = self.email.send_round3_invitation(
+                    recipient=candidate.email,
+                    candidate_name=candidate.name,
+                    job_title=self.assessment_title,
+                    interview_details=None,
+                )
+                self._sent_round3_emails.add(candidate_id)
+                return updated, sent
+            return updated, None
+
+        updated = self.database.update_stage(candidate_id, "REJECTED")
         return updated, None
+
+    # Defensive compatibility alias; create_generated_assessment is the canonical entry point.
 
     def chat(self, message: str, candidate_ids: list[str], conversation_id: str | None):
         return self.orchestrator.handle(

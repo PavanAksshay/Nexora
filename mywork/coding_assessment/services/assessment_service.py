@@ -31,6 +31,10 @@ class AssessmentService:
             else os.getenv("CODING_ASSESSMENT_FRONTEND_URL")
         )
 
+    @property
+    def frontend_url(self) -> str | None:
+        return self._frontend_url
+
     def create_assessment(
         self, request: AssessmentCreateRequest
     ) -> AssessmentResponse:

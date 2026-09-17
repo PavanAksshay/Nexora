@@ -13,6 +13,7 @@ PIPELINE_STAGES = (
     "ASSESSMENT_EVALUATED",
     "HR_REVIEW",
     "HR_SELECTED",
+    "ROUND_3",
     "REJECTED",
 )
 

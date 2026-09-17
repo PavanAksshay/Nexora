@@ -30,10 +30,12 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import type { AssessmentResult, Candidate, CandidateEvidence, SkillEvidence } from '../types';
 import {
+  generateAndSendAssessment,
   getAssessmentResult,
   getAssessmentStatus,
   getCandidateEvidence,
   submitHrDecision,
+  type GeneratedAssessmentResponse,
 } from '../services/api';
 import { store } from '../services/store';
 import { ResumeViewerModal } from './ResumeViewerModal';
@@ -56,16 +58,10 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
   const [downstreamError, setDownstreamError] = useState<string | null>(null);
   const [hrLoading, setHrLoading] = useState(false);
 
-  // Scheduling modal state
+  // Assessment generation state
   const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [scheduleDate, setScheduleDate] = useState(() => {
-    const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    d.setMinutes(0, 0, 0);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  });
-  const [scheduleDuration, setScheduleDuration] = useState(45);
-  const [candidateEmailInput, setCandidateEmailInput] = useState(candidate.email || '');
   const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [generatedAssessment, setGeneratedAssessment] = useState<GeneratedAssessmentResponse | null>(null);
 
   const c = localCandidate;
 
@@ -75,20 +71,37 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
     toast.success(`${c.name} has been shortlisted.`);
   };
 
-  const handleSendAssessmentInvite = () => {
+  const handleGenerateAndSendAssessment = async () => {
     setIsSendingInvite(true);
-    setTimeout(() => {
-      const updated = store.scheduleAssessmentInvite(
-        c.id,
-        scheduleDate,
-        scheduleDuration,
-        candidateEmailInput
-      );
+    setDownstreamError(null);
+    try {
+      const result = await generateAndSendAssessment(c.id);
+      setGeneratedAssessment(result);
+      const inviteUrl = result.invite_url || (result.token ? `${window.location.origin}/candidate/${result.token}` : null);
+      const updated: Candidate = {
+        ...c,
+        currentStage: 'ASSESSMENT_SENT',
+        assessmentStatus: 'invited',
+        assessment: {
+          candidateId: c.id,
+          assessmentId: result.assessment_id,
+          inviteId: result.invite_id,
+          token: result.token,
+          status: result.status,
+          inviteUrl,
+          candidateEmail: result.email?.recipient || c.email,
+        },
+      };
       setLocalCandidate(updated);
+      toast.success(`Technical Assessment created & invitation email sent to ${result.email?.recipient || c.email}!`);
+    } catch (err: any) {
+      console.error('Failed to generate & send assessment:', err);
+      const detail = err?.response?.data?.detail || err?.message || 'Failed to generate assessment.';
+      setDownstreamError(`Assessment generation failed: ${detail}`);
+      toast.error(`Assessment creation failed: ${detail}`);
+    } finally {
       setIsSendingInvite(false);
-      setShowScheduleModal(false);
-      toast.success(`Assessment invitation scheduled for ${new Date(scheduleDate).toLocaleString()} and dispatched.`);
-    }, 400);
+    }
   };
 
   const isPending = c.analysisPending;
@@ -221,8 +234,9 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
   const latestEvaluation = assessment?.submissions.find((submission) => submission.evaluation)?.evaluation;
 
   const handleHrDecision = async (decision: 'HR_SELECTED' | 'REJECTED') => {
+    const isRound3 = decision === 'HR_SELECTED';
     const reason = window.prompt(
-      decision === 'HR_SELECTED' ? 'Reason for selecting this candidate?' : 'Reason for rejecting this candidate?',
+      isRound3 ? 'Reason for selecting this candidate for Round 3?' : 'Reason for rejecting this candidate?',
       latestEvaluation?.explanation || ''
     );
     if (reason === null) return;
@@ -230,10 +244,21 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
     setDownstreamError(null);
     try {
       const updated = await submitHrDecision(c.id, decision, reason);
-      setLocalCandidate((prev) => ({ ...prev, ...updated }));
-    } catch (err) {
+      setLocalCandidate((prev) => ({
+        ...prev,
+        ...updated,
+        currentStage: isRound3 ? 'ROUND_3' : 'REJECTED',
+      }));
+      if (isRound3) {
+        toast.success(`Candidate ${c.name} selected for Round 3! Automatic interview invitation email sent.`);
+      } else {
+        toast.info(`Candidate ${c.name} rejected.`);
+      }
+    } catch (err: any) {
       console.error('Failed to submit HR decision:', err);
-      setDownstreamError('Could not submit HR decision. Candidate must be evaluated and ready for HR review.');
+      const detail = err?.response?.data?.detail || err?.message || 'Could not submit HR decision.';
+      setDownstreamError(detail);
+      toast.error(detail);
     } finally {
       setHrLoading(false);
     }
@@ -372,25 +397,28 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
             <button
               type="button"
               className="btn btn-primary"
+              disabled={isSendingInvite}
               onClick={() => setShowScheduleModal(true)}
             >
-              <Calendar size={14} /> Schedule & Send Technical Assessment
+              <Sparkles size={14} /> Generate & Send Technical Assessment
             </button>
           )}
 
           {c.currentStage === 'ASSESSMENT_SENT' && (
             <>
-              <a
-                href={`/assessment/${c.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-secondary"
-                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-              >
-                <ExternalLink size={14} /> Open Assessment Portal
-              </a>
+              {c.assessment?.inviteUrl && (
+                <a
+                  href={c.assessment.inviteUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                  style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <ExternalLink size={14} /> Open Candidate Assessment Link
+                </a>
+              )}
               <span className="status-badge-inline status-strong">
-                <Clock size={12} /> Assessment Scheduled: {c.assessment?.scheduledAt ? new Date(c.assessment.scheduledAt).toLocaleString() : 'Pending'}
+                <Clock size={12} /> Assessment Invitation Dispatched
               </span>
             </>
           )}
@@ -403,7 +431,7 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
                 disabled={hrLoading}
                 onClick={() => void handleHrDecision('HR_SELECTED')}
               >
-                <CheckCircle2 size={14} /> Select for HR
+                <CheckCircle2 size={14} /> Select for Round 3
               </button>
               <button
                 type="button"
@@ -416,9 +444,9 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
             </>
           )}
 
-          {c.currentStage === 'HR_SELECTED' && (
+          {(c.currentStage === 'HR_SELECTED' || c.currentStage === 'ROUND_3') && (
             <span className="status-badge-inline status-strong" style={{ backgroundColor: '#DCFCE7', color: '#15803D' }}>
-              <CheckCircle2 size={14} /> Candidate Selected for HR
+              <CheckCircle2 size={14} /> Candidate Selected for Round 3
             </span>
           )}
 
@@ -1048,120 +1076,122 @@ export function CandidateDetailView({ candidate, onCompareWithAnother, onBack }:
         />
       )}
 
-      {/* Schedule Assessment Modal */}
+      {/* Generate & Send Technical Assessment Modal */}
       {showScheduleModal && (
         <div className="modal-backdrop">
-          <div className="modal-card" style={{ maxWidth: '520px' }}>
+          <div className="modal-card" style={{ maxWidth: '640px', width: '90%' }}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Calendar size={18} className="text-primary" />
-                <h3>Schedule & Send Technical Assessment</h3>
+                <Sparkles size={18} className="text-primary" />
+                <h3>Generate & Send Technical Assessment</h3>
               </div>
               <button
                 type="button"
                 className="btn-icon"
                 onClick={() => setShowScheduleModal(false)}
+                disabled={isSendingInvite}
               >
                 <X size={18} />
               </button>
             </div>
 
             <div className="modal-body" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                Schedule the technical coding assessment appointment for <b>{c.name}</b>. The assessment portal link will be time-gated and unlock at the specified time.
-              </p>
+              {!generatedAssessment && !isSendingInvite && (
+                <>
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    Click below to trigger 1-button AI assessment generation for <b>{c.name}</b>.
+                  </p>
+                  <div style={{ padding: '14px', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-color)', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                      <FileText size={14} /> Pipeline Input Verification:
+                    </div>
+                    <div>• <b>Candidate:</b> {c.name} ({c.email})</div>
+                    <div>• <b>Job Description:</b> Resolved automatically from candidate analysis</div>
+                    <div>• <b>Target Assessment Duration:</b> 60 minutes</div>
+                    <div>• <b>Questions:</b> 2–3 technical questions customized to JD requirements</div>
+                  </div>
+                </>
+              )}
 
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
-                  Candidate Email:
-                </label>
-                <input
-                  type="email"
-                  value={candidateEmailInput}
-                  onChange={(e) => setCandidateEmailInput(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-xs)',
-                    border: '1px solid var(--border-color)',
-                    fontSize: '13px',
-                  }}
-                  placeholder="candidate@example.com"
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
-                    Assessment Date & Time:
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={scheduleDate}
-                    onChange={(e) => setScheduleDate(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-xs)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                    }}
-                  />
+              {isSendingInvite && (
+                <div style={{ padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                  <Clock className="animate-spin text-primary" size={32} />
+                  <h4 style={{ margin: 0, fontSize: '15px' }}>Generating Personalized Assessment...</h4>
+                  <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Synthesizing questions from JD and candidate resume, creating CodeAssess test, and dispatching invitation email.
+                  </p>
                 </div>
+              )}
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
-                    Duration:
-                  </label>
-                  <select
-                    value={scheduleDuration}
-                    onChange={(e) => setScheduleDuration(Number(e.target.value))}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-xs)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                    }}
-                  >
-                    <option value={30}>30 Minutes</option>
-                    <option value={45}>45 Minutes (Recommended)</option>
-                    <option value={60}>60 Minutes</option>
-                    <option value={90}>90 Minutes</option>
-                  </select>
+              {generatedAssessment && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ padding: '12px 16px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 'var(--radius-xs)', color: '#065F46', fontSize: '13px' }}>
+                    <b>✓ Assessment Generated & Invitation Email Dispatched!</b>
+                  </div>
+
+                  <div>
+                    <h4 style={{ margin: '0 0 4px 0', fontSize: '15px' }}>{generatedAssessment.assessment.title}</h4>
+                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Duration: <b>{generatedAssessment.assessment.duration_minutes} minutes</b> · Questions: <b>{generatedAssessment.assessment.questions.length}</b>
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Generated Questions:</span>
+                    {generatedAssessment.assessment.questions.map((q, idx) => (
+                      <div key={idx} style={{ padding: '10px 12px', backgroundColor: '#F8FAFC', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-xs)', fontSize: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontWeight: 600 }}>
+                          <span>Q{idx + 1}: {q.skills.join(', ') || 'Coding Challenge'}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>{q.estimate_minutes} min ({q.difficulty})</span>
+                        </div>
+                        <p style={{ margin: 0, color: 'var(--text-secondary)' }}>{q.question_text}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ padding: '12px', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-xs)', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>Candidate Unique Invite URL:</div>
+                    <a
+                      href={generatedAssessment.invite_url || `/candidate/${generatedAssessment.token}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: 'var(--primary-color)', wordBreak: 'break-all', fontWeight: 500 }}
+                    >
+                      {generatedAssessment.invite_url || `http://localhost:5173/candidate/${generatedAssessment.token}`}
+                    </a>
+                  </div>
                 </div>
-              </div>
-
-              <div style={{ padding: '12px', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-color)', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                <p style={{ margin: 0 }}>
-                  ✉️ <b>Email Preview:</b> An invitation email containing the candidate's unique assessment link (<code>/assessment/{c.id}</code>) will be dispatched to <b>{candidateEmailInput}</b>.
-                </p>
-              </div>
+              )}
             </div>
 
             <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '12px 20px', borderTop: '1px solid var(--border-color)' }}>
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setShowScheduleModal(false)}
+                onClick={() => {
+                  setShowScheduleModal(false);
+                  setGeneratedAssessment(null);
+                }}
                 disabled={isSendingInvite}
               >
-                Cancel
+                {generatedAssessment ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleSendAssessmentInvite}
-                disabled={isSendingInvite}
-              >
-                {isSendingInvite ? (
-                  <>Sending Invite...</>
-                ) : (
-                  <>
-                    <Send size={14} /> Schedule & Send Email Invite
-                  </>
-                )}
-              </button>
+              {!generatedAssessment && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleGenerateAndSendAssessment}
+                  disabled={isSendingInvite}
+                >
+                  {isSendingInvite ? (
+                    <>Generating...</>
+                  ) : (
+                    <>
+                      <Sparkles size={14} /> Generate & Send Assessment
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

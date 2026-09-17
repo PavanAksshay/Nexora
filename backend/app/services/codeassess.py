@@ -213,7 +213,20 @@ class CodeAssessIntegration:
             candidate_name=candidate_name,
             candidate_email=candidate_email,
         )
-        return assessment, invite, self.service.build_invite_url(invite)
+        invite_url = self.service.build_invite_url(invite)
+        if invite_url is None:
+            invite_url = self.build_invite_url_manual(invite, self.service._frontend_url)
+        return assessment, invite, invite_url
+
+    def build_invite_url_manual(
+        self,
+        invite: InviteResponse,
+        frontend_url: str | None,
+    ) -> str:
+        if frontend_url:
+            return f"{frontend_url}/candidate/{invite.token}"
+        return f"https://localhost/candidate/{invite.token}"
+
 
     def get_result(self, candidate_id: str) -> AssessmentResult:
         return self.service.get_candidate_assessment_result(candidate_id)

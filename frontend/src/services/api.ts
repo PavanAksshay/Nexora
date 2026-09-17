@@ -298,28 +298,60 @@ export async function shortlistCandidate(candidateId: string): Promise<{ candida
   }
 }
 
+export type GeneratedAssessmentResponse = {
+  candidate_id: string;
+  assessment_id: number;
+  invite_id: number;
+  token: string;
+  status: string;
+  invite_url: string | null;
+  assessment: {
+    title: string;
+    description: string;
+    duration_minutes: number;
+    questions: {
+      question_text: string;
+      language: string;
+      difficulty: string;
+      type: string;
+      skills: string[];
+      source_requirements: string[];
+      estimate_minutes: number;
+    }[];
+  };
+  email_sent: boolean;
+  email?: {
+    recipient: string;
+    subject: string;
+    body: string;
+    assessment_url: string | null;
+    message_type: string;
+    sent: boolean;
+  } | null;
+  stage: string;
+};
+
+export async function generateAndSendAssessment(
+  candidateId: string,
+  jobDescription: Record<string, any> = {}
+): Promise<GeneratedAssessmentResponse> {
+  const { data } = await client.post<GeneratedAssessmentResponse>(
+    `/candidates/${candidateId}/assessment/send`,
+    jobDescription
+  );
+  return data;
+}
+
 export async function createCandidateAssessment(
   candidateId: string,
   questionText = 'Implement a small REST API endpoint that validates input, stores a record, and returns a structured JSON response.',
   language = 'python'
 ): Promise<AssessmentInvite> {
-  try {
-    const { data } = await client.post<BackendAssessmentInvite>(
-      `/candidates/${candidateId}/assessment`,
-      { question_text: questionText, language }
-    );
-    return mapAssessmentInvite(data);
-  } catch (err) {
-    console.warn('Backend assessment API unavailable, creating local invite:', err);
-    return {
-      candidateId,
-      assessmentId: 101,
-      inviteId: Math.floor(Math.random() * 10000),
-      token: crypto.randomUUID(),
-      status: 'invited',
-      inviteUrl: `http://localhost:5173/assessment/${candidateId}`,
-    };
-  }
+  const { data } = await client.post<BackendAssessmentInvite>(
+    `/candidates/${candidateId}/assessment`,
+    { question_text: questionText, language }
+  );
+  return mapAssessmentInvite(data);
 }
 
 export async function getAssessmentStatus(candidateId: string): Promise<AssessmentResult> {

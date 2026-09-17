@@ -159,6 +159,7 @@ export type CandidateStage =
   | 'ASSESSMENT_EVALUATED'
   | 'HR_REVIEW'
   | 'HR_SELECTED'
+  | 'ROUND_3'
   | 'REJECTED';
 
 export type AssessmentStatus =
