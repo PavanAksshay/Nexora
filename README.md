@@ -459,12 +459,17 @@ Nexora/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── CandidateDetailView.tsx
+│   │   │   ├── CandidateAssessmentPortal.tsx
 │   │   │   ├── CandidateComparisonModal.tsx
-│   │   │   ├── SkillCoverageTable.tsx
-│   │   │   ├── SkillCandidatesDrawer.tsx
+│   │   │   ├── CandidateDetailView.tsx
+│   │   │   ├── CreateJobModal.tsx
 │   │   │   ├── HiringSimulator.tsx
-│   │   │   └── RecruiterChatbot.tsx
+│   │   │   ├── JobCandidatesView.tsx
+│   │   │   ├── JobOpeningsTable.tsx
+│   │   │   ├── RecruiterChatbot.tsx
+│   │   │   ├── ResumeViewerModal.tsx
+│   │   │   ├── SkillCandidatesDrawer.tsx
+│   │   │   └── SkillCoverageTable.tsx
 │   │   │
 │   │   ├── auth/
 │   │   ├── services/
@@ -476,14 +481,38 @@ Nexora/
 │   ├── package.json
 │   └── vite.config.ts
 │
+├── backend/
+│   ├── app/
+│   │   ├── auth.py
+│   │   ├── config.py
+│   │   ├── container.py
+│   │   ├── db.py
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   ├── providers/
+│   │   ├── routes/
+│   │   └── services/
+│   ├── requirements.txt
+│   └── README.md
+│
 ├── fraud_detection/
 │   └── Resume integrity / fraud-analysis service
 │
 ├── stt_service/
 │   └── Speech-to-text / voice interaction service
 │
-└── mywork/
-    └── Supporting Nexora / evidence / integration work
+├── mywork/
+│   └── Supporting Nexora / evidence / assessment integration work
+│
+├── resume_analyzer.py
+├── extraction.py
+├── normalization.py
+├── skill_extraction.py
+├── semantic_matching.py
+├── keyword_matching.py
+├── chatbot_stt_schema.sql
+└── resume_screening_supabase_schema.sql
 ```
 
 ---
@@ -530,40 +559,74 @@ git clone https://github.com/Sanjayram3269/Nexora.git
 cd Nexora
 ```
 
-## 2. Install dependencies
+## 2. Backend Setup
+
+Set up a Python virtual environment and install dependencies:
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Configure backend environment variables in `.env`:
+
+```env
+# Supabase Configuration
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+
+# Assessment & AI Configuration (Optional / Local Dev)
+NEXORA_AUTH_MODE=development
+NEXORA_CODEASSESS_MODE=mock
+NEXORA_EMAIL_MODE=logging
+CODING_ASSESSMENT_API_URL=http://127.0.0.1:8000
+CODING_ASSESSMENT_FRONTEND_URL=http://localhost:3000
+```
+
+Start the FastAPI backend:
+
+```bash
+uvicorn backend.app.main:app --reload --port 8000
+```
+
+## 3. Frontend Setup
+
+Navigate to the frontend directory and install dependencies:
 
 ```bash
 cd frontend
 npm install
 ```
 
-## 3. Configure environment variables
-
-Create:
-
-```text
-frontend/.env.local
-```
-
-Configure the required Firebase credentials and integration endpoints.
-
-Example:
+Configure frontend environment variables in `frontend/.env`:
 
 ```env
-CODING_ASSESSMENT_API_URL=
-CODING_ASSESSMENT_FRONTEND_URL=
-OPENROUTER_API_KEY=
+# Supabase Database & Storage Configuration
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-public-key
+
+# API Backend (Defaults to /api proxied to http://127.0.0.1:8000)
+VITE_API_URL=/api
+
+# Optional: Firebase Authentication
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
 ```
 
-> ⚠️ Never commit API keys, credentials, tokens, or other secrets.
+> ⚠️ Never commit API keys, credentials, tokens, or other secrets to version control.
 
-## 4. Start Nexora
+## 4. Start Nexora Frontend
 
 ```bash
 npm run dev
 ```
 
-The Vite development server will start the recruiter workspace locally.
+The Vite development server will start the recruiter workspace locally at `http://localhost:5173`.
 
 ---
 
